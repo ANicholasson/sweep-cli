@@ -1,0 +1,24 @@
+# Hexagonal packages with feature folders inside
+
+sweep is one Go module in a ports-and-adapters (hexagonal) shape, with code grouped by feature, not by kind, inside each package tree (decided 2026-11-15).
+
+- `cmd/sweep` is the composition root. It wires the adapters to the use cases by hand, and it is the only package that imports both sides.
+- `internal/domain` holds the model in the glossary's words and the use cases, one folder per feature: `scan`, `plan`, `safety`, `clean` and `ecosystems`. It does no IO: it imports only the standard library and itself, and never `os`, `os/exec` or `net`. Each feature declares the ports it needs.
+- `internal/system` holds the adapters that implement those ports, named in the domain's words: `files`, `git`, `trash` and `docker`. `trash` is the only package that removes anything from disk, with one file per operating system. `docker` only reads sizes, because Docker data is reported and never cleaned.
+- `internal/report` prints what a Scan or a Clean found, and `internal/tui` is the interactive screen. Both depend on the domain and never on `internal/system`.
+- `internal/sweeptest` holds the fakes of the ports and the contract suites every adapter must pass.
+- `tools/fixture` builds the Fixture.
+
+Dependencies point inward, toward the domain. How Rules are written inside `ecosystems` is left to a later ADR, after a prototype.
+
+## Considered Options
+
+- **Packages per technical kind** (`models`, `services`, `helpers`). Rejected: it cuts every feature across several packages, so each change becomes a horizontal slice.
+- **A dependency injection container.** Left out: at this size it would be clever rather than obvious. The composition root wires things by hand.
+
+## Consequences
+
+- The gate fails when the domain imports anything outside the standard library and itself, and when `os.Remove` or `os.RemoveAll` is called outside `internal/system/trash`.
+- A Worktree is trashed like any other Candidate, so there is no second removal path through git.
+- A new Ecosystem touches only `internal/domain/ecosystems`, so several can be added at once without colliding.
+- A new operating system is a new file in `internal/system/trash` that passes the trash contract suite, and nothing else changes.

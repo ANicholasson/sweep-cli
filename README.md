@@ -11,8 +11,8 @@ Status: early development.
 sweep deletes files, so these rules are non-negotiable:
 
 1. Never delete git-tracked files, or a worktree with uncommitted changes.
-2. Never follow a symlink out of a scan root, and never touch a path
-   outside the roots.
+2. Never follow a link (a symlink, or a junction on Windows) out of a
+   root, and never touch a path outside the roots.
 3. If anything changed between the plan and the delete, skip that path.
 
 Deleted items go to the OS trash by default. Permanent delete is opt-in.
