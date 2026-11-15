@@ -11,8 +11,12 @@ A single directory or file that sweep found and believes is safe to reclaim. It 
 _Avoid_: hit, item, junk, finding, target
 
 **Root**:
-A directory the user points sweep at. A Scan looks through everything beneath its Roots and nothing else, and a Clean never touches a path outside them.
+A directory a Scan looks beneath: one the user points sweep at, or a Shared cache sweep adds itself. A Scan looks at nothing else, and a Clean never touches a path outside the Roots.
 _Avoid_: scan root, base, target directory
+
+**Shared cache**:
+A cache an Ecosystem keeps once per user for every Project, such as a download cache or a model cache. sweep finds it at its known location and never picks it for a Plan unless the user does.
+_Avoid_: global cache, system cache, well-known location
 
 **Kind**:
 What sort of leftover a Candidate is: Dependencies, Build output, Cache, Models or Worktree. Every Rule names one.
@@ -66,6 +70,10 @@ _Avoid_: search, analyse, sweep (as a verb)
 **Ignore**:
 Leaving a path out of every Scan because the user said so. Unlike a Skip, it is the user's choice, made before anything is found.
 _Avoid_: exclude, hide
+
+**Pick**:
+Choosing a Candidate for a Plan. sweep picks every Stale Candidate beneath the Roots the user gave, and the user can pick or unpick any Candidate.
+_Avoid_: select, mark, include
 
 **Clean**:
 Carrying out a Plan.
