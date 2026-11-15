@@ -1,0 +1,3 @@
+# LF on every operating system, so the gate runs under Git Bash on Windows
+# as it does elsewhere.
+* text=auto eol=lf

@@ -16,3 +16,24 @@ sweep deletes files, so these rules are non-negotiable:
 3. If anything changed between the plan and the delete, skip that path.
 
 Deleted items go to the OS trash by default. Permanent delete is opt-in.
+
+## The gate
+
+One script decides whether a change is acceptable:
+
+    scripts/verify.sh
+
+It needs Go and bash and nothing else. On Windows, run it from Git Bash.
+It stops at the first step that fails and exits non-zero:
+
+1. `go run ./tools/boundaries` holds the two boundaries of
+   [the package layout](docs/adr/0001-hexagonal-packages-with-feature-folders.md):
+   `internal/domain` does no IO, and `internal/system/trash` is the only
+   package that trashes or deletes anything. It reads every Go file, so a
+   file for another operating system is checked on yours.
+2. `gofmt -l .` lists no file, so every Go file is formatted.
+3. `go build ./...`
+4. `go vet ./...`
+5. `go test ./...`
+
+A change is done when the gate passes.
