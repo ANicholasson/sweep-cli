@@ -31,8 +31,9 @@ It stops at the first step that fails and exits non-zero:
    `internal/domain` does no IO, and `internal/system/trash` is the only
    package that trashes or deletes anything. It reads every Go file, so a
    file for another operating system is checked on yours.
-2. `go build ./...`
-3. `go vet ./...`
-4. `go test ./...`
+2. `gofmt -l .` lists no file, so every Go file is formatted.
+3. `go build ./...`
+4. `go vet ./...`
+5. `go test ./...`
 
 A change is done when the gate passes.

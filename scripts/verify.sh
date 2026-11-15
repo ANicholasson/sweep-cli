@@ -11,7 +11,18 @@ step() {
 	}
 }
 
+# gofmt -l exits 0 even when it lists files, so the list itself decides.
+formatted() {
+	local files
+	files=$(gofmt -l .) || return 1
+	if [ -n "$files" ]; then
+		printf '%s\n\nRun gofmt -w on these files.\n' "$files"
+		return 1
+	fi
+}
+
 step go run ./tools/boundaries
+step formatted
 step go build ./...
 step go vet ./...
 step go test ./...
