@@ -21,10 +21,26 @@ formatted() {
 	fi
 }
 
+lint() {
+	local wanted installed
+	wanted=$(tr -d '[:space:]' < .golangci-lint-version) || return 1
+	if ! command -v golangci-lint > /dev/null; then
+		printf 'golangci-lint is missing. The gate needs version %s, and the gate section of README.md says how to install it.\n' "$wanted"
+		return 1
+	fi
+	installed=$(golangci-lint version --short) || return 1
+	if [ "$installed" != "$wanted" ]; then
+		printf 'golangci-lint %s is installed, but the gate needs %s. The gate section of README.md says how to install it.\n' "$installed" "$wanted"
+		return 1
+	fi
+	golangci-lint run ./...
+}
+
 step go run ./tools/boundaries
 step formatted
 step go build ./...
 step go vet ./...
+step lint
 step go test ./...
 
 printf '\nThe gate passes.\n'
