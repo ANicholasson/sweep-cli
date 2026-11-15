@@ -23,7 +23,11 @@ One script decides whether a change is acceptable:
 
     scripts/verify.sh
 
-It needs Go and bash and nothing else. On Windows, run it from Git Bash.
+It needs Go, bash and golangci-lint at the version in
+`.golangci-lint-version`. To install golangci-lint, follow
+[its local install guide](https://golangci-lint.run/docs/welcome/install/local/)
+and install the binary release of that version, not `go install`. On
+Windows, run the gate from Git Bash.
 It stops at the first step that fails and exits non-zero:
 
 1. `go run ./tools/boundaries` holds the two boundaries of
@@ -34,6 +38,10 @@ It stops at the first step that fails and exits non-zero:
 2. `gofmt -l .` lists no file, so every Go file is formatted.
 3. `go build ./...`
 4. `go vet ./...`
-5. `go test ./...`
+5. `golangci-lint run ./...` runs errcheck, govet, ineffassign, staticcheck
+   and unused, as configured in `.golangci.yml`. The step fails first if
+   golangci-lint is missing or is not the version in
+   `.golangci-lint-version`.
+6. `go test ./...`
 
 A change is done when the gate passes.

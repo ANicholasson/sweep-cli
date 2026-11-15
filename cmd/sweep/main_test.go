@@ -1,9 +1,18 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
+
+var errWriteFailed = errors.New("write failed")
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errWriteFailed
+}
 
 func TestVersionFlagPrintsAVersionAndExitsZero(t *testing.T) {
 	var stdout, stderr strings.Builder
@@ -19,6 +28,19 @@ func TestVersionFlagPrintsAVersionAndExitsZero(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, want nothing", stderr.String())
+	}
+}
+
+func TestVersionFlagFailsWhenStdoutCannotBeWritten(t *testing.T) {
+	var stderr strings.Builder
+
+	status := run([]string{"--version"}, failingWriter{}, &stderr)
+
+	if status == 0 {
+		t.Errorf("exit status = 0, want non-zero")
+	}
+	if !strings.Contains(stderr.String(), errWriteFailed.Error()) {
+		t.Errorf("stderr = %q, want it to say %q", stderr.String(), errWriteFailed)
 	}
 }
 

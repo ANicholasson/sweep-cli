@@ -22,7 +22,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *showVersion {
-		fmt.Fprintln(stdout, "sweep", version())
+		if _, err := fmt.Fprintln(stdout, "sweep", version()); err != nil {
+			_, _ = fmt.Fprintln(stderr, "sweep:", err)
+			return 1
+		}
 		return 0
 	}
 	flags.Usage()
