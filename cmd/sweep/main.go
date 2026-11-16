@@ -3,11 +3,26 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
+	"strings"
+
+	"github.com/ANicholasson/sweep-cli/internal/domain"
+	"github.com/ANicholasson/sweep-cli/internal/domain/ecosystems"
+	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
+	"github.com/ANicholasson/sweep-cli/internal/report"
+	"github.com/ANicholasson/sweep-cli/internal/system/files"
+)
+
+const (
+	done       = 0
+	incomplete = 1
+	misused    = 2
 )
 
 func main() {
@@ -17,19 +32,99 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sweep", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		_, _ = fmt.Fprintln(stderr, "usage: sweep scan [--json] [Root...]")
+		_, _ = fmt.Fprintln(stderr, "       sweep --version")
+		flags.PrintDefaults()
+	}
 	showVersion := flags.Bool("version", false, "print the version and exit")
 	if err := flags.Parse(args); err != nil {
-		return 2
+		return misused
 	}
 	if *showVersion {
 		if _, err := fmt.Fprintln(stdout, "sweep", version()); err != nil {
 			_, _ = fmt.Fprintln(stderr, "sweep:", err)
-			return 1
+			return incomplete
 		}
-		return 0
+		return done
+	}
+	if flags.Arg(0) == "scan" {
+		return scanCommand(flags.Args()[1:], stdout, stderr)
 	}
 	flags.Usage()
-	return 2
+	return misused
+}
+
+func scanCommand(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("sweep scan", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	asJSON := flags.Bool("json", false, "print the Scan as JSON")
+	given, err := parseInterspersed(flags, args)
+	if err != nil {
+		return misused
+	}
+	roots, err := rootsOf(given)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "sweep:", strings.ReplaceAll(err.Error(), "\n", "\nsweep: "))
+		return misused
+	}
+
+	result := scan.Scan(files.Disk{}, roots, ecosystems.All())
+
+	format := report.Table
+	if *asJSON {
+		format = report.JSON
+	}
+	if err := report.Scan(stdout, result, format); err != nil {
+		_, _ = fmt.Fprintln(stderr, "sweep:", err)
+		return incomplete
+	}
+	if len(result.Unreadable) > 0 {
+		return incomplete
+	}
+	return done
+}
+
+func parseInterspersed(flags *flag.FlagSet, args []string) ([]string, error) {
+	var rest []string
+	for {
+		if err := flags.Parse(args); err != nil {
+			return nil, err
+		}
+		left := flags.Args()
+		stoppedAtDashes := len(left) < len(args) && args[len(args)-len(left)-1] == "--"
+		if len(left) == 0 || stoppedAtDashes {
+			return append(rest, left...), nil
+		}
+		rest, args = append(rest, left[0]), left[1:]
+	}
+}
+
+// A Link in a Root is not resolved: since Go 1.23
+// filepath.EvalSymlinks leaves a Windows junction alone, so resolving would
+// mean one thing on Windows and another elsewhere.
+func rootsOf(given []string) ([]domain.Root, error) {
+	if len(given) == 0 {
+		given = []string{"."}
+	}
+	var roots []domain.Root
+	var errs []error
+	for _, p := range given {
+		abs, err := filepath.Abs(p)
+		if err == nil {
+			var info os.FileInfo
+			info, err = os.Stat(abs)
+			if err == nil && !info.IsDir() {
+				err = errors.New("it is not a directory")
+			}
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s cannot be a Root: %w", p, err))
+			continue
+		}
+		roots = append(roots, domain.Root(abs))
+	}
+	return roots, errors.Join(errs...)
 }
 
 // version is what the go command recorded in the binary, so a release needs

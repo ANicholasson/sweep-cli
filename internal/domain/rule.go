@@ -36,13 +36,6 @@ type InSharedCache struct {
 	Split bool
 }
 
-// Candidate is a directory or file that a Rule of an Ecosystem recognised.
-type Candidate struct {
-	Path      string
-	Ecosystem string
-	Rule      Rule
-}
-
 type where interface{ where() }
 
 func (InProject) where()     {}

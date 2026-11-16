@@ -26,6 +26,12 @@ var boundaries = []boundary{
 		dir:   "internal/system/trash",
 		names: []string{"Remove", "RemoveAll", "Unlink", "Unlinkat", "Rmdir"},
 	},
+	importedOnlyBy{
+		name: "only-cmd-imports-adapters",
+		why:  "cmd/sweep is the composition root, the one package that wires an adapter to the domain",
+		dir:  "internal/system",
+		by:   "cmd/sweep",
+	},
 }
 
 type source struct {
@@ -62,6 +68,10 @@ type boundary interface {
 	broken(module string, src source) []violation
 }
 
+type guard interface {
+	guarded() string
+}
+
 type importsOnly struct {
 	name, why      string
 	dir            string
@@ -73,6 +83,12 @@ type onlyIn struct {
 	name, why string
 	dir       string
 	names     []string
+}
+
+type importedOnlyBy struct {
+	name, why string
+	dir       string
+	by        string
 }
 
 func (b importsOnly) rule() (string, string) {
@@ -131,6 +147,25 @@ func (b onlyIn) broken(_ string, src source) []violation {
 	return out
 }
 
+func (b importedOnlyBy) rule() (string, string) {
+	return b.name, fmt.Sprintf("Outside %s no Go file imports a package beneath %s, because %s. So the report never imports an adapter, and no package but %s imports both the domain and an adapter. A test of an adapter is written in the adapter's own package, so it imports none.",
+		b.by, b.dir, b.why, b.by)
+}
+
+func (b importedOnlyBy) governs(src source) bool { return !beneath(src.path, b.by) }
+
+func (b importedOnlyBy) broken(module string, src source) []violation {
+	var out []violation
+	for _, imp := range src.imports {
+		if dir, own := strings.CutPrefix(imp.path, module+"/"); own && beneath(dir, b.dir) {
+			out = append(out, violation{imp.pos, b.name, "imports " + strconv.Quote(imp.path) + ": only " + b.by + " imports an adapter"})
+		}
+	}
+	return out
+}
+
+func (b importedOnlyBy) guarded() string { return b.dir }
+
 func check(fsys fs.FS, boundaries []boundary) ([]violation, error) {
 	module, err := modulePath(fsys)
 	if err != nil {
@@ -138,6 +173,7 @@ func check(fsys fs.FS, boundaries []boundary) ([]violation, error) {
 	}
 	var out []violation
 	governed := make([]int, len(boundaries))
+	held := make([]int, len(boundaries))
 	err = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -161,6 +197,9 @@ func check(fsys fs.FS, boundaries []boundary) ([]violation, error) {
 				governed[i]++
 				out = append(out, b.broken(module, src)...)
 			}
+			if g, ok := b.(guard); ok && beneath(src.path, g.guarded()) {
+				held[i]++
+			}
 		}
 		return nil
 	})
@@ -168,9 +207,12 @@ func check(fsys fs.FS, boundaries []boundary) ([]violation, error) {
 		return nil, err
 	}
 	for i, b := range boundaries {
+		name, _ := b.rule()
 		if governed[i] == 0 {
-			name, _ := b.rule()
 			out = append(out, violation{".", name, "governs no Go file: the directory it names has moved or is empty, so move the boundary with it"})
+		}
+		if g, ok := b.(guard); ok && held[i] == 0 {
+			out = append(out, violation{".", name, "guards " + g.guarded() + ", which holds no Go file: it has moved or is empty, so move the boundary with it"})
 		}
 	}
 	return out, nil
