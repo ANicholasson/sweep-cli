@@ -122,7 +122,9 @@ func listing(t *testing.T, dir string) map[string]string {
 		if err != nil {
 			return err
 		}
-		info, err := d.Info()
+		// On Windows d.Info gives a directory's times as its parent's listing
+		// last copied them, which can lag behind the directory itself.
+		info, err := os.Lstat(p)
 		if err != nil {
 			return err
 		}
