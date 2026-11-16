@@ -71,7 +71,10 @@ func TestBoundaries(t *testing.T) {
 		{
 			name:  "the domain imports an adapter",
 			files: map[string]string{"internal/domain/clean/clean.go": "package clean\n\nimport \"example.com/sweep/internal/system/trash\"\n"},
-			want:  []string{`internal/domain/clean/clean.go:3:8: domain-imports: imports "example.com/sweep/internal/system/trash": neither the standard library nor internal/domain`},
+			want: []string{
+				`internal/domain/clean/clean.go:3:8: domain-imports: imports "example.com/sweep/internal/system/trash": neither the standard library nor internal/domain`,
+				`internal/domain/clean/clean.go:3:8: only-cmd-imports-adapters: imports "example.com/sweep/internal/system/trash": only cmd/sweep imports an adapter`,
+			},
 		},
 		{
 			name:  "the domain uses cgo",
@@ -185,6 +188,53 @@ func TestBoundaries(t *testing.T) {
 		},
 
 		{
+			name:  "the report imports an adapter",
+			files: map[string]string{"internal/report/scan.go": "package report\n\nimport \"example.com/sweep/internal/system/files\"\n"},
+			want:  []string{`internal/report/scan.go:3:8: only-cmd-imports-adapters: imports "example.com/sweep/internal/system/files": only cmd/sweep imports an adapter`},
+		},
+		{
+			name:  "a package that is not cmd/sweep imports the domain and an adapter",
+			files: map[string]string{"internal/tui/tui.go": "package tui\n\nimport (\n\t\"example.com/sweep/internal/domain/scan\"\n\t\"example.com/sweep/internal/system/files\"\n)\n"},
+			want:  []string{`internal/tui/tui.go:5:2: only-cmd-imports-adapters: imports "example.com/sweep/internal/system/files": only cmd/sweep imports an adapter`},
+		},
+		{
+			name:  "an adapter imports another adapter",
+			files: map[string]string{"internal/system/trash/trash.go": "package trash\n\nimport \"example.com/sweep/internal/system/files\"\n"},
+			want:  []string{`internal/system/trash/trash.go:3:8: only-cmd-imports-adapters: imports "example.com/sweep/internal/system/files": only cmd/sweep imports an adapter`},
+		},
+		{
+			name:  "the fakes import an adapter",
+			files: map[string]string{"internal/sweeptest/files.go": "package sweeptest\n\nimport \"example.com/sweep/internal/system/files\"\n"},
+			want:  []string{`internal/sweeptest/files.go:3:8: only-cmd-imports-adapters: imports "example.com/sweep/internal/system/files": only cmd/sweep imports an adapter`},
+		},
+		{
+			name:  "the test of an adapter imports it from outside its package",
+			files: map[string]string{"internal/system/files/files_test.go": "package files_test\n\nimport \"example.com/sweep/internal/system/files\"\n"},
+			want:  []string{`internal/system/files/files_test.go:3:8: only-cmd-imports-adapters: imports "example.com/sweep/internal/system/files": only cmd/sweep imports an adapter`},
+		},
+		{
+			name:  "cmd/sweep imports the domain and an adapter",
+			files: map[string]string{"cmd/sweep/main.go": "package main\n\nimport (\n\t_ \"example.com/sweep/internal/domain/scan\"\n\t_ \"example.com/sweep/internal/system/files\"\n)\n\nfunc main() {}\n"},
+		},
+		{
+			name:  "an adapter imports the domain, whose port it implements",
+			files: map[string]string{"internal/system/files/files.go": "package files\n\nimport _ \"example.com/sweep/internal/domain/scan\"\n"},
+		},
+		{
+			name:  "a directory that only starts like the adapters",
+			files: map[string]string{"internal/report/report.go": "package report\n\nimport _ \"example.com/sweep/internal/systems/files\"\n"},
+		},
+		{
+			name:   "the adapters have moved",
+			remove: []string{"internal/system/files/files.go"},
+			files: map[string]string{
+				"internal/adapters/files/files.go": "package files\n",
+				"internal/report/report.go":        "package report\n\nimport _ \"example.com/sweep/internal/adapters/files\"\n",
+			},
+			want: []string{`.: only-cmd-imports-adapters: guards internal/system, which holds no Go file: it has moved or is empty, so move the boundary with it`},
+		},
+
+		{
 			name:  "a file that does not parse",
 			files: map[string]string{"internal/report/report.go": "package report\n\nfunc {\n"},
 			want:  []string{`internal/report/report.go:3:6: readable: does not parse (expected 'IDENT', found '{'), so no boundary can vouch for it`},
@@ -193,9 +243,10 @@ func TestBoundaries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fsys := fstest.MapFS{
-				"go.mod":                 {Data: []byte("module example.com/sweep\n\ngo 1.27\n")},
-				"cmd/sweep/main.go":      {Data: []byte("package main\n\nfunc main() {}\n")},
-				"internal/domain/doc.go": {Data: []byte("package domain\n")},
+				"go.mod":                         {Data: []byte("module example.com/sweep\n\ngo 1.27\n")},
+				"cmd/sweep/main.go":              {Data: []byte("package main\n\nfunc main() {}\n")},
+				"internal/domain/doc.go":         {Data: []byte("package domain\n")},
+				"internal/system/files/files.go": {Data: []byte("package files\n")},
 			}
 			for _, name := range tt.remove {
 				delete(fsys, name)

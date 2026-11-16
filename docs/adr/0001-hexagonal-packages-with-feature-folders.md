@@ -19,6 +19,7 @@ Dependencies point inward, toward the domain. [ADR-0003](0003-each-ecosystem-is-
 ## Consequences
 
 - The gate fails when the domain imports anything outside the standard library and itself, and when `os.Remove` or `os.RemoveAll` is called outside `internal/system/trash`.
+- The gate fails when a Go file outside `cmd/sweep` imports a package beneath `internal/system`. So `internal/report` and `internal/tui` never import an adapter, and `cmd/sweep` is the only package that imports both the domain and an adapter. It also means an adapter never imports another adapter, and the test of an adapter is written in the adapter's own package, where it hands the adapter to its contract suite in `internal/sweeptest`.
 - A Worktree is trashed like any other Candidate, so there is no second removal path through git.
 - A new Ecosystem touches only `internal/domain/ecosystems`, so several can be added at once without colliding.
 - A new operating system is a new file in `internal/system/trash` that passes the trash contract suite, and nothing else changes.

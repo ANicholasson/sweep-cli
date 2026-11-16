@@ -47,11 +47,12 @@ and install the binary release of that version, not `go install`. On
 Windows, run the gate from Git Bash.
 It stops at the first step that fails and exits non-zero:
 
-1. `go run ./tools/boundaries` holds the two boundaries of
+1. `go run ./tools/boundaries` holds the three boundaries of
    [the package layout](docs/adr/0001-hexagonal-packages-with-feature-folders.md):
-   `internal/domain` does no IO, and `internal/system/trash` is the only
-   package that trashes or deletes anything. It reads every Go file, so a
-   file for another operating system is checked on yours.
+   `internal/domain` does no IO, `internal/system/trash` is the only
+   package that trashes or deletes anything, and `cmd/sweep` is the only
+   package that imports an adapter from `internal/system`. It reads every
+   Go file, so a file for another operating system is checked on yours.
 2. `gofmt -l .` lists no file, so every Go file is formatted.
 3. `go build ./...`
 4. `go vet ./...`
