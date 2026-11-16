@@ -9,7 +9,7 @@ sweep is one Go module in a ports-and-adapters (hexagonal) shape, with code grou
 - `internal/sweeptest` holds the fakes of the ports and the contract suites every adapter must pass.
 - `tools/fixture` builds the Fixture.
 
-Dependencies point inward, toward the domain. How Rules are written inside `ecosystems` is left to a later ADR, after a prototype.
+Dependencies point inward, toward the domain. [ADR-0003](0003-each-ecosystem-is-one-go-file.md) records how Rules are written inside `ecosystems`.
 
 ## Considered Options
 
