@@ -12,7 +12,7 @@ func node() Ecosystem {
 		{
 			Kind:   Cache,
 			Reason: "npm downloads it again.",
-			Where:  InSharedCache{Linux: ".npm/_cacache", MacOS: ".npm/_cacache", Windows: "AppData/Local/npm-cache"},
+			Where:  InSharedCache{Linux: ".npm/_cacache", MacOS: ".npm/_cacache", Windows: "AppData/Local/npm-cache/_cacache"},
 		},
 	}}
 }

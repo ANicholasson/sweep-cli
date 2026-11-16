@@ -17,7 +17,7 @@ func init() {
 				Where: domain.InSharedCache{
 					Linux:   ".npm/_cacache",
 					MacOS:   ".npm/_cacache",
-					Windows: "AppData/Local/npm-cache",
+					Windows: "AppData/Local/npm-cache/_cacache",
 				},
 			},
 		},
