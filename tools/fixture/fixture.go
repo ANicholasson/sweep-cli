@@ -48,6 +48,8 @@ var fixture = []entry{
 	{"projects/web-app/node_modules/fake-beta/package.json", manifest("fake-beta")},
 	{"projects/web-app/node_modules/fake-beta/index.js", module("fake-beta")},
 	{"projects/web-app/node_modules/fake-beta/LICENSE", hardLink("projects/web-app/node_modules/fake-alpha/LICENSE")},
+	{"projects/web-app/node_modules/fake-alpha/node_modules/fake-epsilon/package.json", manifest("fake-epsilon")},
+	{"projects/web-app/node_modules/fake-alpha/node_modules/fake-epsilon/index.js", module("fake-epsilon")},
 
 	{"projects/tracked-app/package.json", manifest("tracked-app")},
 	{"projects/tracked-app/node_modules/fake-gamma/package.json", manifest("fake-gamma")},

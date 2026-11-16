@@ -141,6 +141,31 @@ func TestCandidateHoldsAHardLinkedPair(t *testing.T) {
 	}
 }
 
+func TestACandidateHoldsADirectoryARuleRecognises(t *testing.T) {
+	dir := built(t)
+
+	nested := 0
+	for _, c := range answers(t, dir).Candidates {
+		top := filepath.Join(dir, filepath.FromSlash(c.Path))
+		err := filepath.WalkDir(top, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || p == top || !d.IsDir() {
+				return err
+			}
+			rel, err := filepath.Rel(dir, p)
+			if _, ok := recognised(dir, filepath.ToSlash(rel)); ok {
+				nested++
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if nested == 0 {
+		t.Error("no Candidate holds a directory a Rule recognises on its own, so nothing shows that a Scan stops at a Candidate")
+	}
+}
+
 func TestBuildsIntoAMissingDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "not", "yet")
 
