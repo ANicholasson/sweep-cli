@@ -65,7 +65,7 @@ func Validate(ecosystems []Ecosystem) error {
 	}
 	for i, a := range caches {
 		for _, b := range caches[i+1:] {
-			if a.system == b.system && (beneath(a.location, b.location) || beneath(b.location, a.location)) {
+			if overlap(a, b) {
 				errs = append(errs, fmt.Errorf("%s and %s have Shared caches at %q and %q on %s, and a Candidate never holds another", a.owner, b.owner, a.location, b.location, a.system))
 			}
 		}
@@ -74,6 +74,19 @@ func Validate(ecosystems []Ecosystem) error {
 }
 
 type sharedCache struct{ system, location, owner string }
+
+// overlap folds case on macOS and Windows, whose file systems ignore it by
+// default, so two spellings of one place are one place.
+func overlap(a, b sharedCache) bool {
+	if a.system != b.system {
+		return false
+	}
+	p, q := a.location, b.location
+	if a.system != "Linux" {
+		p, q = strings.ToLower(p), strings.ToLower(q)
+	}
+	return beneath(p, q) || beneath(q, p)
+}
 
 func known(k Kind) bool {
 	for _, each := range kinds {
