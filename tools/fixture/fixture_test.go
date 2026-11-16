@@ -30,7 +30,36 @@ func TestTwoBuildsAreIdentical(t *testing.T) {
 }
 
 func TestAnswerKeyMatchesTheFixture(t *testing.T) {
-	dir := built(t)
+	matchesAnswerKey(t, built(t))
+}
+
+func TestPerUserGitFilesLeaveTheFixtureAlone(t *testing.T) {
+	for _, configHome := range []string{"XDG_CONFIG_HOME", "HOME"} {
+		t.Run(configHome, func(t *testing.T) {
+			home := t.TempDir()
+			gitDir := filepath.Join(home, ".config", "git")
+			if err := os.MkdirAll(gitDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, line := range map[string]string{"ignore": "node_modules\n", "attributes": "* -text\n"} {
+				if err := os.WriteFile(filepath.Join(gitDir, name), []byte(line), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("XDG_CONFIG_HOME", "")
+			if configHome == "XDG_CONFIG_HOME" {
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+			}
+
+			matchesAnswerKey(t, built(t))
+		})
+	}
+}
+
+func matchesAnswerKey(t *testing.T, dir string) {
+	t.Helper()
 	key := answers(t, dir)
 
 	if key.Version != 1 {

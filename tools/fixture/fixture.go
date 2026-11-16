@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
@@ -149,6 +150,9 @@ func fill(dir string) error {
 		if err := commitAll(filepath.Join(dir, filepath.FromSlash(r))); err != nil {
 			return err
 		}
+		if err := tracksAll(dir, r); err != nil {
+			return err
+		}
 	}
 	data, err := json.MarshalIndent(key, "", "  ")
 	if err != nil {
@@ -172,6 +176,26 @@ func commitAll(repo string) error {
 	return nil
 }
 
+// tracksAll fails the build when git skips a file of repository r, because a
+// skipped file would leave the Trap untracked with no other sign.
+func tracksAll(dir, r string) error {
+	out, err := git(filepath.Join(dir, filepath.FromSlash(r)), "ls-files", "-z")
+	if err != nil {
+		return err
+	}
+	tracked := strings.Split(string(out), "\x00")
+	var missing []string
+	for _, e := range fixture {
+		if p, ok := strings.CutPrefix(e.path, r+"/"); ok && !slices.Contains(tracked, p) {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("git does not track %s in %s, so the Trap would not hold", strings.Join(missing, ", "), r)
+	}
+	return nil
+}
+
 func git(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -189,12 +213,18 @@ func git(dir string, args ...string) ([]byte, error) {
 }
 
 // gitEnv shuts out every git setting from outside the repository, such as
-// commit signing, line endings or a default branch, so none of them changes
+// commit signing, line endings or a default branch, and the per-user ignore
+// and attributes files git reads even with no config, so none of them changes
 // the Fixture.
 func gitEnv() []string {
 	env := []string{
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=core.excludesFile",
+		"GIT_CONFIG_VALUE_0=" + os.DevNull,
+		"GIT_CONFIG_KEY_1=core.attributesFile",
+		"GIT_CONFIG_VALUE_1=" + os.DevNull,
 		"GIT_AUTHOR_NAME=Fixture",
 		"GIT_AUTHOR_EMAIL=fixture@example.invalid",
 		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z",
