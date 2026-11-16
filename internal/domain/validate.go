@@ -9,8 +9,11 @@ import (
 
 // Validate reports every way the Ecosystems break the model, nil if none.
 // Some breaks show only across Ecosystems that are each right on their own,
-// such as two Rules that would list the same Candidate twice, so it takes
-// them all at once.
+// such as two Rules with one Manifest and one Candidate, so it takes them all
+// at once. Two Rules with different Manifests may name one Candidate, such as
+// build beside package.json and build beside build.gradle, because each is
+// right on its own. A Project holding both Manifests is the Scan's to list
+// once.
 func Validate(ecosystems []Ecosystem) error {
 	var errs []error
 	names := map[string]bool{}
