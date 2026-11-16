@@ -121,9 +121,13 @@ _Avoid_: failure, error
 ### Proving it works
 
 **Fixture**:
-The fake developer machine the fixture tool builds, holding known Candidates and Traps.
+The fake developer machine the fixture tool builds, holding the Candidates and Traps its Answer key lists.
 _Avoid_: test data, sandbox
 
 **Trap**:
 A path in the Fixture that looks like a Candidate but must survive a Clean.
 _Avoid_: decoy, negative case
+
+**Answer key**:
+The file the fixture tool writes beside the Fixture. It lists every Candidate a Scan must find, with its path and Kind, and every Trap, with the reason a Clean must leave it. It holds no Sizes, because those are checked against the built tree.
+_Avoid_: expected results, golden file
