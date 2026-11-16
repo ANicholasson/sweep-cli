@@ -56,3 +56,16 @@ func TestNoArgumentsIsAUsageError(t *testing.T) {
 		t.Errorf("stderr = %q, want the usage", stderr.String())
 	}
 }
+
+func TestScanFailsWhenStdoutCannotBeWritten(t *testing.T) {
+	var stderr strings.Builder
+
+	status := run([]string{"scan", t.TempDir()}, failingWriter{}, &stderr)
+
+	if status != 1 {
+		t.Errorf("exit status = %d, want 1", status)
+	}
+	if !strings.Contains(stderr.String(), errWriteFailed.Error()) {
+		t.Errorf("stderr = %q, want it to say %q", stderr.String(), errWriteFailed)
+	}
+}

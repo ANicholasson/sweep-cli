@@ -6,6 +6,23 @@ Windows, Linux and macOS.
 
 Status: early development.
 
+## Usage
+
+    sweep scan [--json] [Root...]
+
+A Scan looks beneath each Root, or beneath the current directory when you
+give none, and lists every Candidate a Rule recognises, such as a
+`node_modules` beside a `package.json`, with its Size, Kind, path and
+Reason. It prints the Roots it used, and it changes
+nothing. `--json` prints the same as one JSON document with a `version`
+field. A Size is in bytes in the JSON, and it is what `du -s` reports for
+the path, with each hard-linked file counted once.
+
+The exit status is 0 when the Scan read everything, 1 when something
+beneath a Root could not be read or the output could not be written, and 2
+when the command line is wrong or a Root is not a directory, in which case
+nothing is scanned.
+
 ## Safety rules
 
 sweep deletes files, so these rules are non-negotiable:
@@ -42,6 +59,10 @@ It stops at the first step that fails and exits non-zero:
    and unused, as configured in `.golangci.yml`. The step fails first if
    golangci-lint is missing or is not the version in
    `.golangci-lint-version`.
-6. `go test ./...`
+6. `go test -count=1 ./...` runs every test, none from the cache, because
+   the end-to-end test builds the fixture tool, which the cache cannot see.
+   That test builds the Fixture and the `sweep` binary, runs one against
+   the other and compares each Size with `du`, so `git` and `du` must be on
+   the PATH. Git Bash brings both on Windows.
 
 A change is done when the gate passes.

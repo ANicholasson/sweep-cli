@@ -32,6 +32,12 @@ It runs on Linux, Windows and macOS for every pull request. [The gate](README.md
 
 A change is done when the gate passes and the pull request shows the evidence.
 
+## Tests
+
+- Take every expected value from a source independent of sweep: `du` for a Size, `git status` for what git tracks, a listing of the tree before and after for what a run changed. Never take one from sweep's own output.
+- Test a behaviour through the built binary against the Fixture wherever that can show it, as `cmd/sweep/scan_test.go` does. Use a fake from `internal/sweeptest` only for what the binary cannot be made to show, and say in the test what that is.
+- To cover a new Candidate, add it to the Fixture and to the Answer key. The end-to-end test reads the Answer key, so it needs no new code.
+
 ## Changes
 
 - Keep each pull request to one underlying problem.
