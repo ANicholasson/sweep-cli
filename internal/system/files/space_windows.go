@@ -31,10 +31,10 @@ const fileStandardInfoClass = 1
 //
 // Windows reports no allocation for a small file whose bytes live in its
 // file record, and then the bytes it holds stand in. The result is rounded
-// up to 512, so Space counts in the same blocks on every operating system.
-// That is the rule the Cygwin runtime under Git Bash follows for st_blocks,
-// so the du of Git Bash, the independent source the end-to-end test compares
-// a Size with, counts the same way.
+// up to 1024, because the Cygwin runtime under Git Bash counts st_blocks in
+// 1024-byte blocks with the same stand-in, so the du of Git Bash, the
+// independent source the end-to-end test compares a Size with, counts the
+// same way.
 func (Disk) Space(path string) (scan.Space, error) {
 	name, err := syscall.UTF16PtrFromString(long(path))
 	if err != nil {
@@ -63,7 +63,7 @@ func (Disk) Space(path string) (scan.Space, error) {
 		allocated = std.EndOfFile
 	}
 	return scan.Space{
-		Bytes: (allocated + 511) / 512 * 512,
+		Bytes: (allocated + 1023) / 1024 * 1024,
 		File: scan.FileID{
 			Volume: uint64(id.VolumeSerialNumber),
 			File:   uint64(id.FileIndexHigh)<<32 | uint64(id.FileIndexLow),
