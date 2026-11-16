@@ -15,7 +15,7 @@ A directory a Scan looks beneath: one the user points sweep at, or a Shared cach
 _Avoid_: scan root, base, target directory
 
 **Shared cache**:
-A cache an Ecosystem keeps once per user for every Project, such as a download cache or a model cache. sweep finds it at its known location and never picks it for a Plan unless the user does.
+A cache an Ecosystem keeps once per user for every Project, such as a download cache or a model cache. sweep finds it at its known location and never picks it for a Plan unless the user does. It is taken whole as one Candidate, or split so that each entry directly inside it, such as each model, is a Candidate of its own.
 _Avoid_: global cache, system cache, well-known location
 
 **Kind**:
