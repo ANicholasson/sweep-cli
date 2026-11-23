@@ -15,9 +15,14 @@ type Work struct {
 	Files []string
 	// Repo is the work tree root, or "" when the tree holds no repository.
 	Repo string
-	// Tracked are the files git tracks. Each sits under Repo. The real
-	// adapter commits these and no others.
+	// Tracked are the files git tracks. The real adapter commits each in
+	// the innermost repository that contains it, and in no other.
 	Tracked []string
+	// Nested are work trees inside the top, besides Repo. A directory
+	// holds a tracked file when any of these repositories tracks one
+	// inside it, including a repository the enclosing work tree does not
+	// track.
+	Nested []string
 	// Broken reports Unknown for every path, as when the git binary is missing.
 	Broken bool
 }
@@ -32,40 +37,67 @@ type Git struct {
 
 var _ safety.Git = Git{}
 
-// NewGit answers from work. A directory under Repo that holds a tracked
-// file is Tracked, any other directory under Repo is Untracked, and a
-// directory outside Repo is Outside.
+// NewGit answers from work. A directory that holds a tracked file is
+// Tracked, whether the enclosing repository or a nested one tracks it.
+// Any other directory inside a work tree is Untracked, and a directory
+// outside every work tree is Outside.
 func NewGit(top string, work Work) Git {
 	g := Git{broken: work.Broken}
 	if work.Broken {
 		return g
 	}
-	repo := ""
+	var repos []string
 	if work.Repo != "" {
-		repo = joinUnder(top, work.Repo)
+		repos = append(repos, joinUnder(top, work.Repo))
+	}
+	for _, repo := range work.Nested {
+		repos = append(repos, joinUnder(top, repo))
+	}
+	tracked := map[string]bool{}
+	for _, file := range work.Tracked {
+		tracked[joinUnder(top, file)] = true
 	}
 	answers := map[string]safety.State{}
-	seed := func(file string, state safety.State) {
-		for _, dir := range ancestors(file) {
-			if repo == "" || !within(dir, repo) {
-				if _, seen := answers[dir]; !seen {
-					answers[dir] = safety.Outside
-				}
-				continue
-			}
-			if answers[dir] != safety.Tracked {
-				answers[dir] = state
-			}
+	consider := func(dir string) {
+		switch {
+		case holdsTracked(dir, tracked):
+			answers[dir] = safety.Tracked
+		case insideAny(dir, repos):
+			answers[dir] = safety.Untracked
+		default:
+			answers[dir] = safety.Outside
 		}
 	}
 	for _, file := range work.Files {
-		seed(joinUnder(top, file), safety.Untracked)
+		for _, dir := range ancestors(joinUnder(top, file)) {
+			consider(dir)
+		}
 	}
-	for _, file := range work.Tracked {
-		seed(joinUnder(top, file), safety.Tracked)
+	for file := range tracked {
+		for _, dir := range ancestors(file) {
+			consider(dir)
+		}
 	}
 	g.answers = answers
 	return g
+}
+
+func holdsTracked(dir string, tracked map[string]bool) bool {
+	for file := range tracked {
+		if within(file, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func insideAny(dir string, repos []string) bool {
+	for _, repo := range repos {
+		if within(dir, repo) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g Git) State(p string) safety.State {

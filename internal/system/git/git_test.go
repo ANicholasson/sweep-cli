@@ -25,17 +25,31 @@ func TestLocalPassesTheGitContract(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		var repos []string
 		if work.Repo != "" {
-			repo := filepath.Join(top, filepath.FromSlash(work.Repo))
+			repos = append(repos, work.Repo)
+		}
+		repos = append(repos, work.Nested...)
+		for _, relRepo := range repos {
+			repo := filepath.Join(top, filepath.FromSlash(relRepo))
 			git(t, repo, "init", "-q", "-b", "main")
+			added := false
 			for _, file := range work.Tracked {
+				if innermost(file, repos) != relRepo {
+					continue
+				}
 				rel, err := filepath.Rel(repo, filepath.Join(top, filepath.FromSlash(file)))
 				if err != nil {
 					t.Fatal(err)
 				}
 				git(t, repo, "add", "--", rel)
+				added = true
 			}
-			git(t, repo, "commit", "-q", "-m", "Track")
+			args := []string{"commit", "-q", "-m", "Track"}
+			if !added {
+				args = append(args, "--allow-empty")
+			}
+			git(t, repo, args...)
 		}
 		local := Local{}
 		if work.Broken {
@@ -65,6 +79,43 @@ func TestLsFilesLeavesTheRepositoryUntouched(t *testing.T) {
 	if after := stamp(t, repo); after != before {
 		t.Errorf("the repository changed:\n%s", after)
 	}
+}
+
+func TestANestedRepositoryKeepsTheDirectory(t *testing.T) {
+	top := t.TempDir()
+	pkg := filepath.Join(top, "app", "node_modules", "pkg")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "keep.js"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, pkg, "init", "-q", "-b", "main")
+	git(t, pkg, "add", "--", "keep.js")
+	git(t, pkg, "commit", "-q", "-m", "Track")
+	git(t, pkg, "read-tree", "HEAD")
+	before := stamp(t, pkg)
+
+	got := (Local{}).State(filepath.Join(top, "app", "node_modules"))
+
+	if got != safety.Tracked {
+		t.Errorf("State = %v, want Tracked", got)
+	}
+	if after := stamp(t, pkg); after != before {
+		t.Errorf("the nested repository changed:\n%s", after)
+	}
+}
+
+func innermost(file string, repos []string) string {
+	best := ""
+	for _, repo := range repos {
+		if file == repo || strings.HasPrefix(file, repo+"/") {
+			if len(repo) > len(best) {
+				best = repo
+			}
+		}
+	}
+	return best
 }
 
 func git(t *testing.T, dir string, args ...string) {
