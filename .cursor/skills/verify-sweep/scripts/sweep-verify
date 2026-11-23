@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Drives the built sweep binary against a fresh Fixture and keeps evidence.
+#
+#   sweep-verify launch                       build binaries and a Fixture; prints RUN=<dir>
+#   sweep-verify doctor  <run>                is this run worth driving?
+#   sweep-verify run     <run> <step> [-C <dir>] -- <sweep args...>
+#                                             run sweep, record argv, stdout, stderr,
+#                                             exit status and what changed in the Fixture
+#   sweep-verify du      <run> <path>         bytes du -s gives, as the tests measure it
+#   sweep-verify cleanup <run>                remove binaries, Fixture and scratch; keep evidence
+#
+# Run launch from the checkout under test. Runs live under
+# ${SWEEP_VERIFY_DIR:-${TMPDIR:-/tmp}/sweep-verify}/<run-id>/.
+
+set -euo pipefail
+
+marker=.sweep-verify-run
+
+die() {
+	printf 'sweep-verify: %s\n' "$*" >&2
+	exit 2
+}
+
+base() { printf '%s\n' "${SWEEP_VERIFY_DIR:-${TMPDIR:-/tmp}/sweep-verify}"; }
+
+need_run() {
+	[ -n "${1:-}" ] || die "give the run directory that launch printed"
+	[ -f "$1/$marker" ] || die "$1 is not a run that launch made"
+}
+
+exe() { printf '%s/bin/%s%s\n' "$1" "$2" "$(cat "$1/goexe")"; }
+
+listing() {
+	(cd "$1" && {
+		find . -exec ls -ldn {} +
+		find . -type f -exec cksum {} +
+	} | LC_ALL=C sort)
+}
+
+checkout_state() {
+	{
+		git -C "$1" rev-parse HEAD
+		git -C "$1" --no-optional-locks status --porcelain=v1 --untracked-files=all
+		git -C "$1" --no-optional-locks diff HEAD
+	} | cksum
+}
+
+trap_tracked() {
+	git -C "$1/fixture/projects/tracked-app" --no-optional-locks status --porcelain
+}
+
+cmd_launch() {
+	command -v go > /dev/null || die "go is not on the PATH"
+	local checkout run
+	checkout=$(git rev-parse --show-toplevel 2> /dev/null) || die "run launch from inside the sweep checkout to verify"
+	[ -f "$checkout/cmd/sweep/main.go" ] && [ -f "$checkout/tools/fixture/main.go" ] || die "$checkout is not a sweep checkout"
+	run="$(base)/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+	mkdir -p "$run/bin" "$run/evidence" "$run/scratch"
+	: > "$run/$marker"
+	printf '%s\n' "$checkout" > "$run/checkout"
+	(cd "$checkout" && go env GOEXE) > "$run/goexe"
+	(cd "$checkout" && go build -o "$(exe "$run" sweep)" ./cmd/sweep && go build -o "$(exe "$run" fixture)" ./tools/fixture)
+	"$(exe "$run" fixture)" "$run/fixture"
+	checkout_state "$checkout" > "$run/checkout-state"
+	listing "$run/fixture" > "$run/evidence/fixture-listing-built.txt"
+	cp "$run/fixture/answer-key.json" "$run/evidence/answer-key.json"
+	{
+		printf 'checkout: %s\n' "$(git -C "$checkout" rev-parse HEAD)"
+		printf 'checkout changes:\n'
+		git -C "$checkout" --no-optional-locks status --short
+		printf 'sweep --version: %s\n' "$("$(exe "$run" sweep)" --version)"
+		go version -m "$(exe "$run" sweep)" | grep -E 'vcs\.' || true
+	} > "$run/evidence/build.txt"
+	printf 'ready: sweep and the Fixture are built\nRUN=%s\n' "$run"
+}
+
+cmd_doctor() {
+	need_run "${1:-}"
+	local run=$1 fail=0 checkout
+	checkout=$(cat "$run/checkout")
+	check() {
+		if eval "$2"; then printf 'ok    %s\n' "$1"; else
+			printf 'FAIL  %s\n' "$1"
+			fail=1
+		fi
+	}
+	check "du and git are on the PATH" 'command -v du > /dev/null && command -v git > /dev/null'
+	check "sweep is built and prints its version" '"$(exe "$run" sweep)" --version | grep -q "^sweep "'
+	check "the checkout has not changed since launch (else launch again)" '[ "$(checkout_state "$checkout")" = "$(cat "$run/checkout-state")" ]'
+	check "the Fixture is as the fixture tool built it" 'listing "$run/fixture" | cmp -s - "$run/evidence/fixture-listing-built.txt"'
+	check "git tracks every file of the Trap in projects/tracked-app" '[ -z "$(trap_tracked "$run")" ]'
+	if [ "$fail" != 0 ]; then
+		printf 'doctor: do not drive this run\n'
+		return 1
+	fi
+	printf 'doctor: worth driving\n'
+}
+
+cmd_run() {
+	need_run "${1:-}"
+	local run=$1 step=${2:-} dir
+	[ -n "$step" ] || die "give a step name, such as scan-json/match"
+	shift 2
+	dir="$run/fixture"
+	if [ "${1:-}" = -C ]; then
+		case "$2" in
+		/*) dir=$2 ;;
+		*) dir="$run/fixture/$2" ;;
+		esac
+		shift 2
+	fi
+	[ "${1:-}" = -- ] || die "put -- before the sweep arguments"
+	shift
+	local out="$run/evidence/$step" status
+	mkdir -p "$out"
+	{
+		printf 'cwd: %s\n' "$dir"
+		printf 'argv: sweep'
+		printf ' %q' "$@"
+		printf '\n'
+	} > "$out/command.txt"
+	listing "$run/fixture" > "$out/fixture-before.txt"
+	touch "$out/.started"
+	set +e
+	(cd "$dir" && "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
+	status=$?
+	set -e
+	printf '%s\n' "$status" > "$out/status"
+	listing "$run/fixture" > "$out/fixture-after.txt"
+	{
+		diff "$out/fixture-before.txt" "$out/fixture-after.txt" || true
+		(cd "$run/fixture" && find . -newer "$out/.started" | sed 's/^/newer than the start: /')
+	} > "$out/fixture-changes.txt"
+	rm "$out/.started" "$out/fixture-before.txt" "$out/fixture-after.txt"
+	printf -- '--- %s: exit status %s\n--- stdout\n%s\n--- stderr\n%s\n' "$step" "$status" "$(cat "$out/stdout")" "$(cat "$out/stderr")"
+	if [ -s "$out/fixture-changes.txt" ]; then
+		printf -- '--- the Fixture CHANGED:\n%s\n' "$(cat "$out/fixture-changes.txt")"
+	else
+		printf -- '--- the Fixture is unchanged\n'
+	fi
+	printf -- '--- evidence: %s\n' "$out"
+}
+
+cmd_du() {
+	need_run "${1:-}"
+	[ -e "${2:-}" ] || die "give a path that exists"
+	local blocks
+	blocks=$(env -u DU_BLOCK_SIZE -u BLOCK_SIZE POSIXLY_CORRECT=1 BLOCKSIZE=512 du -s "$2" | awk '{print $1}')
+	printf '%s %s\n' "$((blocks * 512))" "$2" | tee -a "$1/evidence/du.txt"
+}
+
+cmd_cleanup() {
+	need_run "${1:-}"
+	local run=$1
+	chmod -R u+rwx "$run/scratch" "$run/fixture" 2> /dev/null || true
+	rm -rf "$run/bin" "$run/fixture" "$run/scratch"
+	printf 'cleaned: binaries, Fixture and scratch are gone\nevidence kept: %s/evidence\n' "$run"
+}
+
+case "${1:-}" in
+launch) cmd_launch ;;
+doctor) cmd_doctor "${2:-}" ;;
+run) shift && cmd_run "$@" ;;
+du) cmd_du "${2:-}" "${3:-}" ;;
+cleanup) cmd_cleanup "${2:-}" ;;
+*) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' && exit 2 ;;
+esac
