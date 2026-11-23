@@ -41,7 +41,7 @@ Read-only. Run it first, again whenever a result surprises you, and last before 
 - `bin/sweep --version` prints `sweep <version>`.
 - The checkout is at the same commit with the same uncommitted changes as at launch. The contents of untracked files count, including files inside an untracked directory and the target text of an untracked symlink. A nested repository's `.git` directory and the paths it ignores do not count, and an uninitialised submodule counts as its path. Editing a counted file after launch leaves the binary stale: clean up and launch again.
 - The Fixture's listing (mode, size, time, checksum of every path) equals the one the fixture tool built. A FAIL means something wrote into the Fixture; find which step from the `fixture-changes.txt` files and treat it as a finding, not noise.
-- `git status` in `projects/tracked-app` is clean, so the Git rule Trap still holds.
+- The Trap path `projects/tracked-app/node_modules` is clean, and `git ls-files` lists files under it. The same repository holds an ignored Candidate and an untracked Candidate, so a status of the whole repository is not empty.
 
 ## Drive
 

@@ -122,8 +122,15 @@ checkout_state() {
 	)
 }
 
+# Problems with the Trap, or nothing when it holds. The repository also
+# holds an ignored Candidate and an untracked one, so a status of the whole
+# work tree is not the Trap. Ask only about its node_modules, and require
+# git to track something there.
 trap_tracked() {
-	git -C "$1/fixture/projects/tracked-app" --no-optional-locks status --porcelain
+	local repo="$1/fixture/projects/tracked-app" tracked
+	git -C "$repo" --no-optional-locks status --porcelain -- node_modules
+	tracked=$(git -C "$repo" --no-optional-locks ls-files -- node_modules)
+	[ -n "$tracked" ] || printf 'node_modules is not tracked\n'
 }
 
 cmd_launch() {
