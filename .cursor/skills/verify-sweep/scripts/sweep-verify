@@ -38,11 +38,26 @@ listing() {
 }
 
 checkout_state() {
-	{
-		git -C "$1" rev-parse HEAD
-		git -C "$1" --no-optional-locks status --porcelain=v1 --untracked-files=all
-		git -C "$1" --no-optional-locks diff HEAD
-	} | cksum
+	local root=$1
+	# git diff HEAD omits untracked files, so an edit to one would leave this
+	# checksum unchanged and the doctor would accept a stale binary.
+	(
+		list=$(mktemp)
+		out=$(mktemp)
+		# An EXIT trap that only removes the files would report success after a failed hash.
+		trap 'status=$?; rm -f "$list" "$out"; exit "$status"' EXIT
+		git -C "$root" --no-optional-locks ls-files --others --exclude-standard -z > "$list"
+		{
+			git -C "$root" rev-parse HEAD
+			git -C "$root" --no-optional-locks status --porcelain=v1 --untracked-files=all
+			git -C "$root" --no-optional-locks diff HEAD
+			while IFS= read -r -d '' path; do
+				blob=$(git -C "$root" --no-optional-locks hash-object -- "$path") || exit 1
+				printf '%s %s\n' "$blob" "$path"
+			done < "$list"
+		} > "$out"
+		cksum < "$out"
+	)
 }
 
 trap_tracked() {
