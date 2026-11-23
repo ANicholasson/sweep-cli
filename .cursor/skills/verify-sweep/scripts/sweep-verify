@@ -49,15 +49,22 @@ hash_untracked() {
 	printf '%s %s\n' "$blob" "$rel"
 }
 
+# True when dir is the top of its own repository. A folder inside a repository
+# walks up to that repository, so its top and its parent's top are the same.
+own_repo() {
+	local dir=$1 top parent
+	top=$(git -C "$dir" rev-parse --show-toplevel 2> /dev/null) || return 1
+	parent=$(git -C "$dir/.." rev-parse --show-toplevel 2> /dev/null || true)
+	[ "$top" != "$parent" ]
+}
+
 # Hash the files of an untracked nested repository. Its .git directory and the
 # paths it ignores are left out, so a fetch, a status or a build output there
-# does not change the checksum.
+# does not change the checksum. An uninitialised submodule is not its own
+# repository; record its path instead of failing.
 hash_untracked_dir() {
-	local root=$1 dir=$2 top parent names rel
-	top=$(git -C "$root/$dir" rev-parse --show-toplevel 2> /dev/null) || return 1
-	parent=$(git -C "$root/$dir/.." rev-parse --show-toplevel 2> /dev/null || true)
-	# A directory that is not its own repository walks up to the parent.
-	[ "$top" != "$parent" ] || return 1
+	local root=$1 dir=$2 names rel
+	own_repo "$root/$dir" || return 1
 	names=$(mktemp)
 	git -C "$root/$dir" --no-optional-locks ls-files --cached --others --exclude-standard -z > "$names" || {
 		rm -f "$names"
@@ -66,10 +73,14 @@ hash_untracked_dir() {
 	while IFS= read -r -d '' rel; do
 		rel=${rel%/}
 		if [ -d "$root/$dir/$rel" ] && [ ! -L "$root/$dir/$rel" ]; then
-			hash_untracked_dir "$root" "$dir/$rel" || {
-				rm -f "$names"
-				return 1
-			}
+			if own_repo "$root/$dir/$rel"; then
+				hash_untracked_dir "$root" "$dir/$rel" || {
+					rm -f "$names"
+					return 1
+				}
+			else
+				printf 'gitlink %s\n' "$dir/$rel"
+			fi
 		elif [ ! -e "$root/$dir/$rel" ] && [ ! -L "$root/$dir/$rel" ]; then
 			printf 'missing %s\n' "$dir/$rel"
 		else
