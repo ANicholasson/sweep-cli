@@ -131,7 +131,11 @@ cmd_run() {
 	{
 		printf 'cwd: %s\n' "$dir"
 		printf 'argv: sweep'
-		printf ' %q' "$@"
+		# A missing printf argument is treated as empty, which would record
+		# `argv: sweep ''` when sweep was run with no arguments.
+		if [ "$#" -gt 0 ]; then
+			printf ' %q' "$@"
+		fi
 		printf '\n'
 	} > "$out/command.txt"
 	listing "$run/fixture" > "$out/fixture-before.txt"
