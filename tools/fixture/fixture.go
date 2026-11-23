@@ -39,7 +39,8 @@ func (l hardLink) create(dir, target string) error {
 	return os.Link(filepath.Join(dir, filepath.FromSlash(string(l))), target)
 }
 
-var fixture = []entry{
+// committed is written before the repository commits, and git tracks it.
+var committed = []entry{
 	{"projects/web-app/package.json", manifest("web-app")},
 	{"projects/web-app/src/index.js", file(`console.log(require("fake-alpha"), require("fake-beta"));` + "\n")},
 	{"projects/web-app/node_modules/fake-alpha/package.json", manifest("fake-alpha")},
@@ -54,10 +55,30 @@ var fixture = []entry{
 	{"projects/tracked-app/package.json", manifest("tracked-app")},
 	{"projects/tracked-app/node_modules/fake-gamma/package.json", manifest("fake-gamma")},
 	{"projects/tracked-app/node_modules/fake-gamma/index.js", module("fake-gamma")},
+	{"projects/tracked-app/.gitignore", file("ignored-app/node_modules/\n")},
+	{"projects/tracked-app/ignored-app/package.json", manifest("ignored-app")},
+	{"projects/tracked-app/untracked-app/package.json", manifest("untracked-app")},
 
 	{"outside/stray-app/package.json", manifest("stray-app")},
 	{"outside/stray-app/node_modules/fake-delta/package.json", manifest("fake-delta")},
 	{"outside/stray-app/node_modules/fake-delta/index.js", module("fake-delta")},
+}
+
+// ignored is written before the commit. The repository's gitignore names it,
+// so git add leaves it out and the Git rule does not keep it.
+var ignored = []entry{
+	{"projects/tracked-app/ignored-app/node_modules/fake-zeta/package.json", manifest("fake-zeta")},
+	{"projects/tracked-app/ignored-app/node_modules/fake-zeta/index.js", module("fake-zeta")},
+	{"projects/tracked-app/ignored-app/node_modules/fake-zeta/note.txt", file("zeta\n")},
+	{"projects/tracked-app/ignored-app/node_modules/fake-zeta/note-again.txt", hardLink("projects/tracked-app/ignored-app/node_modules/fake-zeta/note.txt")},
+}
+
+// untracked is written after the commit, and no gitignore names it.
+var untracked = []entry{
+	{"projects/tracked-app/untracked-app/node_modules/fake-eta/package.json", manifest("fake-eta")},
+	{"projects/tracked-app/untracked-app/node_modules/fake-eta/index.js", module("fake-eta")},
+	{"projects/tracked-app/untracked-app/node_modules/fake-eta/note.txt", file("eta\n")},
+	{"projects/tracked-app/untracked-app/node_modules/fake-eta/note-again.txt", hardLink("projects/tracked-app/untracked-app/node_modules/fake-eta/note.txt")},
 }
 
 var repositories = []string{"projects/tracked-app"}
@@ -84,6 +105,8 @@ var key = answerKey{
 	Root:    "projects",
 	Candidates: []candidate{
 		{Path: "projects/web-app/node_modules", Kind: domain.Dependencies.String()},
+		{Path: "projects/tracked-app/ignored-app/node_modules", Kind: domain.Dependencies.String()},
+		{Path: "projects/tracked-app/untracked-app/node_modules", Kind: domain.Dependencies.String()},
 	},
 	Traps: []trap{
 		{Path: "projects/tracked-app/node_modules", Reason: "Git tracks its files, so the Git rule keeps it."},
@@ -139,19 +162,24 @@ func claim(dir string) error {
 }
 
 func fill(dir string) error {
-	for _, e := range fixture {
-		target := filepath.Join(dir, filepath.FromSlash(e.path))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		if err := e.content.create(dir, target); err != nil {
-			return err
+	for _, group := range [][]entry{committed, ignored} {
+		for _, e := range group {
+			if err := writeEntry(dir, e); err != nil {
+				return err
+			}
 		}
 	}
 	for _, r := range repositories {
 		if err := commitAll(filepath.Join(dir, filepath.FromSlash(r))); err != nil {
 			return err
 		}
+	}
+	for _, e := range untracked {
+		if err := writeEntry(dir, e); err != nil {
+			return err
+		}
+	}
+	for _, r := range repositories {
 		if err := tracksAll(dir, r); err != nil {
 			return err
 		}
@@ -161,6 +189,14 @@ func fill(dir string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, "answer-key.json"), append(data, '\n'), 0o644)
+}
+
+func writeEntry(dir string, e entry) error {
+	target := filepath.Join(dir, filepath.FromSlash(e.path))
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	return e.content.create(dir, target)
 }
 
 func commitAll(repo string) error {
@@ -178,40 +214,98 @@ func commitAll(repo string) error {
 	return nil
 }
 
-// tracksAll fails the build when git skips a file of repository r, because a
-// skipped file would leave the Trap untracked with no other sign.
+// tracksAll fails the build when the Trap's files are not tracked, or when
+// an ignored or untracked Candidate is tracked, because either mistake
+// would make a Scan show the wrong paths.
 func tracksAll(dir, r string) error {
-	out, err := git(filepath.Join(dir, filepath.FromSlash(r)), "ls-files", "-z")
+	repo := filepath.Join(dir, filepath.FromSlash(r))
+	out, err := git(repo, "ls-files", "-z")
 	if err != nil {
 		return err
 	}
 	tracked := strings.Split(string(out), "\x00")
-	var missing []string
-	for _, e := range fixture {
+	var missing, present []string
+	for _, e := range committed {
 		if p, ok := strings.CutPrefix(e.path, r+"/"); ok && !slices.Contains(tracked, p) {
 			missing = append(missing, p)
+		}
+	}
+	for _, e := range append(slices.Clone(ignored), untracked...) {
+		if p, ok := strings.CutPrefix(e.path, r+"/"); ok && slices.Contains(tracked, p) {
+			present = append(present, p)
 		}
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("git does not track %s in %s, so the Trap would not hold", strings.Join(missing, ", "), r)
 	}
+	if len(present) > 0 {
+		return fmt.Errorf("git tracks %s in %s, so that Candidate would be a Trap", strings.Join(present, ", "), r)
+	}
+	for _, e := range ignored {
+		if p, ok := strings.CutPrefix(e.path, r+"/"); ok {
+			if err := wantIgnored(repo, p, true); err != nil {
+				return err
+			}
+		}
+	}
+	for _, e := range untracked {
+		if p, ok := strings.CutPrefix(e.path, r+"/"); ok {
+			if err := wantIgnored(repo, p, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func wantIgnored(repo, rel string, ignored bool) error {
+	code, err := gitCode(repo, "check-ignore", "-q", "--", rel)
+	if err != nil {
+		return err
+	}
+	switch {
+	case ignored && code != 0:
+		return fmt.Errorf("git does not ignore %s, so the ignored Candidate would be only untracked", rel)
+	case !ignored && code == 0:
+		return fmt.Errorf("git ignores %s, so the untracked Candidate would be ignored", rel)
+	case code != 0 && code != 1:
+		return fmt.Errorf("git check-ignore %s: exit %d", rel, code)
+	}
 	return nil
 }
 
 func git(dir string, args ...string) ([]byte, error) {
+	out, code, err := runGit(dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("git %s in %s: exit %d: %s", strings.Join(args, " "), dir, code, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
+func gitCode(dir string, args ...string) (int, error) {
+	_, code, err := runGit(dir, args...)
+	return code, err
+}
+
+func runGit(dir string, args ...string) ([]byte, int, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = gitEnv()
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	err := cmd.Run()
 	if err == nil {
-		return out, nil
+		return stdout.Bytes(), 0, nil
 	}
-	if said := strings.TrimSpace(stderr.String()); said != "" {
-		err = fmt.Errorf("%w: %s", err, said)
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return stderr.Bytes(), exit.ExitCode(), nil
 	}
-	return nil, fmt.Errorf("git %s in %s: %w", strings.Join(args, " "), dir, err)
+	return nil, 0, fmt.Errorf("git %s in %s: %w", strings.Join(args, " "), dir, err)
 }
 
 // gitEnv shuts out every git setting from outside the repository, such as

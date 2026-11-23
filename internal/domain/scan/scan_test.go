@@ -27,7 +27,7 @@ func TestAPathTwoRulesRecogniseIsListedOnceUnderTheSameRule(t *testing.T) {
 		"app/build/out.bin": sweeptest.File{Bytes: 1},
 	})
 	for _, ecosystems := range [][]domain.Ecosystem{{gradle, web}, {web, gradle}} {
-		got := scan.Scan(files, []domain.Root{sweeptest.Top}, ecosystems)
+		got := scan.Scan(files, sweeptest.Git{}, []domain.Root{sweeptest.Top}, ecosystems)
 
 		if len(got.Candidates) != 1 {
 			t.Fatalf("%d Candidates, want app/build once", len(got.Candidates))
@@ -45,7 +45,7 @@ func TestSizeCountsEachDirectoryAndEachHardLinkedFileOnce(t *testing.T) {
 		"app/node_modules/b/LICENSE": sweeptest.HardLink{To: "app/node_modules/a/LICENSE"},
 	})
 
-	got := scan.Scan(files, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got := scan.Scan(files, sweeptest.Git{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
 
 	want := domain.Size(3*sweeptest.DirSpace + 64<<10) // node_modules, a and b, and the LICENSE once
 	if len(got.Candidates) != 1 || got.Candidates[0].Size != want {
@@ -66,7 +66,7 @@ func TestWhatCannotBeReadIsReportedOnceAndTheRestIsStillFound(t *testing.T) {
 	files.Unreadable("locked", denied)
 	files.Unreadable("open/app/node_modules/sealed", denied)
 
-	got := scan.Scan(files, []domain.Root{sweeptest.Top, "/gone"}, []domain.Ecosystem{web})
+	got := scan.Scan(files, sweeptest.Git{}, []domain.Root{sweeptest.Top, "/gone"}, []domain.Ecosystem{web})
 
 	want := domain.Size(2*sweeptest.DirSpace + 512) // node_modules and a, and x.js
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/open/app/node_modules" || got.Candidates[0].Size != want {
@@ -98,7 +98,7 @@ func TestAScanNeverEntersALinkAndNeverListsOne(t *testing.T) {
 		"elsewhere/node_modules/b/package.json": sweeptest.File{Bytes: 1},
 	})
 
-	got := scan.Scan(files, []domain.Root{sweeptest.Top + "/real"}, []domain.Ecosystem{web})
+	got := scan.Scan(files, sweeptest.Git{}, []domain.Root{sweeptest.Top + "/real"}, []domain.Ecosystem{web})
 
 	want := domain.Size(3*sweeptest.DirSpace + 512) // node_modules, a and .bin, and x.js, while the Link a-tool takes none
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/real/app/node_modules" || got.Candidates[0].Size != want {
@@ -108,7 +108,7 @@ func TestAScanNeverEntersALinkAndNeverListsOne(t *testing.T) {
 		t.Errorf("Unreadable = %v, want nothing", got.Unreadable)
 	}
 
-	got = scan.Scan(files, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got = scan.Scan(files, sweeptest.Git{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
 
 	var paths []string
 	for _, c := range got.Candidates {
@@ -117,5 +117,62 @@ func TestAScanNeverEntersALinkAndNeverListsOne(t *testing.T) {
 	wantPaths := []string{sweeptest.Top + "/elsewhere/node_modules", sweeptest.Top + "/real/app/node_modules"}
 	if !slices.Equal(paths, wantPaths) || len(got.Unreadable) != 0 {
 		t.Errorf("Candidates = %v, Unreadable = %v, want %v and nothing unreadable", paths, got.Unreadable, wantPaths)
+	}
+}
+
+func TestTheGitRuleKeepsAPathOutOfTheCandidates(t *testing.T) {
+	files := sweeptest.NewFiles(sweeptest.Tree{
+		"app/package.json":                       sweeptest.File{Bytes: 1},
+		"app/node_modules/keep.js":               sweeptest.File{Bytes: 1},
+		"app/node_modules/pkg/package.json":      sweeptest.File{Bytes: 1},
+		"app/node_modules/pkg/node_modules/a.js": sweeptest.File{Bytes: 1},
+		"app/other/package.json":                 sweeptest.File{Bytes: 1},
+		"app/other/node_modules/b.js":            sweeptest.File{Bytes: 1},
+		"loose/package.json":                     sweeptest.File{Bytes: 1},
+		"loose/node_modules/c.js":                sweeptest.File{Bytes: 1},
+	})
+	git := sweeptest.NewGit(sweeptest.Top, sweeptest.Work{
+		Repo: "app",
+		Files: []string{
+			"app/package.json",
+			"app/node_modules/keep.js",
+			"app/node_modules/pkg/package.json",
+			"app/node_modules/pkg/node_modules/a.js",
+			"app/other/package.json",
+			"app/other/node_modules/b.js",
+			"loose/package.json",
+			"loose/node_modules/c.js",
+		},
+		Tracked: []string{"app/package.json", "app/node_modules/keep.js"},
+	})
+
+	got := scan.Scan(files, git, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+
+	// app/node_modules holds a tracked file, so the Git rule keeps it and
+	// the Scan does not enter it. The node_modules inside it is absent.
+	// loose is outside the work tree, so it is still a Candidate.
+	var paths []string
+	for _, c := range got.Candidates {
+		paths = append(paths, c.Path)
+	}
+	want := []string{sweeptest.Top + "/app/other/node_modules", sweeptest.Top + "/loose/node_modules"}
+	if !slices.Equal(paths, want) || len(got.Unreadable) != 0 {
+		t.Errorf("Candidates = %v, Unreadable = %v, want %v and nothing unreadable", paths, got.Unreadable, want)
+	}
+}
+
+func TestAPathGitCannotAnswerIsNotACandidate(t *testing.T) {
+	files := sweeptest.NewFiles(sweeptest.Tree{
+		"app/package.json":        sweeptest.File{Bytes: 1},
+		"app/node_modules/a.js":   sweeptest.File{Bytes: 1},
+		"loose/package.json":      sweeptest.File{Bytes: 1},
+		"loose/node_modules/b.js": sweeptest.File{Bytes: 1},
+	})
+	git := sweeptest.NewGit(sweeptest.Top, sweeptest.Work{Broken: true})
+
+	got := scan.Scan(files, git, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+
+	if len(got.Candidates) != 0 || len(got.Unreadable) != 0 {
+		t.Errorf("Candidates = %+v, Unreadable = %v, want no Candidate and nothing unreadable", got.Candidates, got.Unreadable)
 	}
 }

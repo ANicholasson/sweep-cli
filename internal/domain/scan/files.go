@@ -1,5 +1,6 @@
-// Package scan looks for Candidates. A Scan changes nothing: it reads the
-// file tree only through Files, which has no method that writes.
+// Package scan looks for Candidates. A Scan changes nothing. It reads the
+// file tree only through Files, and it asks the Git rule only through
+// safety.Git. Neither port has a method that writes.
 package scan
 
 // Files is the port a Scan reads the file tree through. It only reads, and

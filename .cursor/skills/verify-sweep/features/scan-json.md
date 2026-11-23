@@ -27,11 +27,12 @@ Preconditions:
 - **Size.** Measure independently. Run `"$H" du "$RUN" "$RUN/fixture/projects/web-app/node_modules"`. The `size` of that Candidate equals the bytes `du` printed, exactly.
 - **Hard link counted once.** `projects/web-app/node_modules/fake-alpha/LICENSE` and `fake-beta/LICENSE` are one file (about 64 KiB) under two names. The exact match with `du`, which counts it once, is the proof; a Size about 64 KiB above `du` means it was counted twice.
 - **Empty lists.** Scan a directory with no Candidate. Run `"$H" run "$RUN" scan-json/empty -- scan --json projects/web-app/src`. Exit status `0`, and stdout contains `"candidates": []` and `"unreadable": []`, not `null`.
+- **Git rule.** No `path` is `$RUN/fixture/projects/tracked-app/node_modules`. `git -C "$RUN/fixture/projects/tracked-app" --no-optional-locks ls-files` prints paths under `node_modules/`. The ignored and untracked Candidates from the Answer key are listed.
 - **Unchanged.** For every step, `fixture-changes.txt` is empty.
 
 ## Gotchas
 
-- `candidates` also holds `projects/tracked-app/node_modules`, a Trap, with Size equal to its `du`. That is correct today: the Git rule acts at Clean. The Answer key's Candidate list is what a Scan must find, not everything it may find.
+- The tracked `node_modules` Trap is absent. Counting it as a Candidate fails the step. The Answer key's Candidate list is what a Scan must find.
 - Measure with `"$H" du`, not a bare `du -sk` or `du -sb`: the helper asks for 512-byte blocks the way the end-to-end test does, and `-b` gives apparent size, which is not a Size.
 - Measure after the Scan, never before launch: the file system may still be placing new blocks right after the Fixture is built. If `du` and `size` disagree, measure again; two equal `du` readings settle it.
 - Paths in the JSON are absolute and include the run directory; replace it with `$RUN` before pasting into a pull request.

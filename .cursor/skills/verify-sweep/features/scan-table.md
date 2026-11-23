@@ -29,7 +29,7 @@ Preconditions:
 
 ## Gotchas
 
-- The table also lists `projects/tracked-app/node_modules`, a Trap. That is correct today: the Git rule acts at Clean, and a Scan does not consult git. Do not count it as a failure, and do not count it as a Candidate the Answer key requires.
+- The table has no row for `projects/tracked-app/node_modules`. That path is a Trap: git tracks files inside it. The ignored and untracked `node_modules` under `projects/tracked-app` are Candidates and do have rows.
 - Rows come Root by Root, and within a directory in order of name; don't assert row positions across Roots.
 - Human Sizes round to one decimal, so compare against `du` with the tolerance above, and use [Scan as JSON](./scan-json.md) for exact bytes.
 - The `Not read, so the list may be short and a Size may be low` section appears only when something is unreadable; drive it through [A Scan that cannot read everything](./scan-unreadable.md).

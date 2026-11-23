@@ -148,20 +148,15 @@ func TestScanOfTheFixture(t *testing.T) {
 		nothingInsideACandidate(t, scan(t, dir, root))
 	})
 
-	t.Run("a Trap outside the Root is not listed", func(t *testing.T) {
+	t.Run("no Trap is listed", func(t *testing.T) {
 		out := scan(t, dir, root)
-		outside := 0
-		for _, trap := range key.Traps {
-			if trap.Path == key.Root || strings.HasPrefix(trap.Path, key.Root+"/") {
-				continue
-			}
-			outside++
-			if listed(out, at(trap.Path)) != 0 {
-				t.Errorf("the Trap %s is listed, and it is outside the Root", trap.Path)
-			}
+		if len(key.Traps) == 0 {
+			t.Fatal("the Answer key has no Trap, so this shows nothing")
 		}
-		if outside == 0 {
-			t.Fatal("the Answer key has no Trap outside the Root, so this shows nothing")
+		for _, trap := range key.Traps {
+			if listed(out, at(trap.Path)) != 0 {
+				t.Errorf("the Trap %s is listed", trap.Path)
+			}
 		}
 	})
 
