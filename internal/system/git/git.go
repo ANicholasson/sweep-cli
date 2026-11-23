@@ -29,7 +29,7 @@ var _ safety.Git = Local{}
 //
 // A repository nested inside path is a separate work tree. ls-files in path
 // does not list its tracked files, so State asks each nested repository
-// before it reports Outside or Untracked. A failure there is Unknown.
+// before it reports Outside or Untracked. A git failure there is Unknown.
 func (l Local) State(path string) safety.State {
 	state := l.ask(path)
 	switch state {
@@ -78,7 +78,10 @@ func (l Local) nested(root string) (safety.State, error) {
 	var state safety.State
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if !d.IsDir() {
 			return nil
@@ -89,12 +92,12 @@ func (l Local) nested(root string) (safety.State, error) {
 		if p == root {
 			return nil
 		}
-		_, statErr := os.Lstat(filepath.Join(p, ".git"))
-		if errors.Is(statErr, os.ErrNotExist) {
-			return nil
+		present, unreadable := gitEntry(p)
+		if unreadable {
+			return fs.SkipDir
 		}
-		if statErr != nil {
-			return statErr
+		if !present {
+			return nil
 		}
 		switch l.ask(p) {
 		case safety.Tracked:
@@ -117,6 +120,17 @@ func (l Local) nested(root string) (safety.State, error) {
 }
 
 var errStop = errors.New("git: stop walk")
+
+func gitEntry(dir string) (present, unreadable bool) {
+	_, err := os.Lstat(filepath.Join(dir, ".git"))
+	if err == nil {
+		return true, false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false
+	}
+	return false, true
+}
 
 // isolatedEnv drops every GIT_ variable and the caller's locale, then sets
 // the ones this read needs. A GIT_DIR from the environment would answer

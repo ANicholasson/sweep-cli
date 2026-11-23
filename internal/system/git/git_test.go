@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -103,6 +104,37 @@ func TestANestedRepositoryKeepsTheDirectory(t *testing.T) {
 	}
 	if after := stamp(t, pkg); after != before {
 		t.Errorf("the nested repository changed:\n%s", after)
+	}
+}
+
+func TestAnUnreadableDirectoryDoesNotHideANestedRepository(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("only an account that is not root can be refused a directory by its mode")
+	}
+	top := t.TempDir()
+	pkg := filepath.Join(top, "app", "node_modules", "pkg")
+	sealed := filepath.Join(top, "app", "node_modules", "aaa")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sealed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "keep.js"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, pkg, "init", "-q", "-b", "main")
+	git(t, pkg, "add", "--", "keep.js")
+	git(t, pkg, "commit", "-q", "-m", "Track")
+	if err := os.Chmod(sealed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0o755) })
+
+	got := (Local{}).State(filepath.Join(top, "app", "node_modules"))
+
+	if got != safety.Tracked {
+		t.Errorf("State = %v, want Tracked", got)
 	}
 }
 

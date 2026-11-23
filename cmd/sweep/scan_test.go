@@ -298,6 +298,40 @@ func TestAScanThatCannotReadADirectoryListsItAndExitsOne(t *testing.T) {
 	}
 }
 
+func TestAScanThatCannotReadInsideACandidateListsItAndExitsOne(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("only an account that is not root can be refused a directory by its mode")
+	}
+	b := build(t)
+	top := t.TempDir()
+	for _, p := range []string{"app/package.json", "app/node_modules/a/index.js", "app/node_modules/sealed/keep.js"} {
+		if err := os.MkdirAll(filepath.Join(top, filepath.Dir(p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(top, p), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sealed := filepath.Join(top, "app", "node_modules", "sealed")
+	if err := os.Chmod(sealed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0o755) })
+
+	got := b.run(t, top, "scan", "--json", top)
+
+	if got.status != 1 {
+		t.Errorf("exit status %d, want 1", got.status)
+	}
+	out := decode(t, got)
+	if len(out.Unreadable) != 1 || !sameDir(t, out.Unreadable[0].Path, sealed) {
+		t.Errorf("unreadable = %+v, want %s", out.Unreadable, sealed)
+	}
+	if len(out.Candidates) != 1 || !sameDir(t, out.Candidates[0].Path, filepath.Join(top, "app", "node_modules")) {
+		t.Errorf("candidates = %+v, want app/node_modules", out.Candidates)
+	}
+}
+
 type row struct {
 	cells              []string
 	size, within       float64
