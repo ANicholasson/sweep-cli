@@ -39,7 +39,7 @@ Read-only. Run it first, again whenever a result surprises you, and last before 
 
 - `du` and `git` are on the PATH (every Size is checked against `du`, the Trap against `git`).
 - `bin/sweep --version` prints `sweep <version>`.
-- The checkout is at the same commit with the same uncommitted changes as at launch. The contents of untracked files count, so editing one after launch leaves the binary stale: clean up and launch again.
+- The checkout is at the same commit with the same uncommitted changes as at launch. The contents of untracked files count, including files inside an untracked directory and the target text of an untracked symlink. Editing one after launch leaves the binary stale: clean up and launch again.
 - The Fixture's listing (mode, size, time, checksum of every path) equals the one the fixture tool built. A FAIL means something wrote into the Fixture; find which step from the `fixture-changes.txt` files and treat it as a finding, not noise.
 - `git status` in `projects/tracked-app` is clean, so the Git rule Trap still holds.
 
@@ -104,7 +104,7 @@ sweep-verify du      <run> <path>         bytes du -s gives, as the tests measur
 sweep-verify cleanup <run>                remove binaries, Fixture and scratch; keep evidence
 ```
 
-It runs on Linux, macOS and Git Bash on Windows, using only bash, `find`, `ls`, `cksum`, `du`, `git` and `go`.
+It runs on Linux, macOS and Git Bash on Windows, using only bash, `find`, `ls`, `readlink`, `cksum`, `du`, `git` and `go`.
 
 ## How this relates to the gate
 

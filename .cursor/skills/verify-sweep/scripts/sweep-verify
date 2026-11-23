@@ -37,6 +37,18 @@ listing() {
 	} | LC_ALL=C sort)
 }
 
+# Print "blob path" for one untracked path. hash-object follows a symlink and
+# fails when the target is missing, so a symlink is hashed as its target text.
+hash_untracked() {
+	local root=$1 rel=$2 blob
+	if [ -L "$root/$rel" ]; then
+		blob=$(readlink "$root/$rel" | git hash-object --stdin) || return 1
+	else
+		blob=$(git -C "$root" --no-optional-locks hash-object -- "$rel") || return 1
+	fi
+	printf '%s %s\n' "$blob" "$rel"
+}
+
 checkout_state() {
 	local root=$1
 	# git diff HEAD omits untracked files, so an edit to one would leave this
@@ -44,16 +56,26 @@ checkout_state() {
 	(
 		list=$(mktemp)
 		out=$(mktemp)
+		nested=$(mktemp)
 		# An EXIT trap that only removes the files would report success after a failed hash.
-		trap 'status=$?; rm -f "$list" "$out"; exit "$status"' EXIT
+		trap 'status=$?; rm -f "$list" "$out" "$nested"; exit "$status"' EXIT
 		git -C "$root" --no-optional-locks ls-files --others --exclude-standard -z > "$list"
 		{
 			git -C "$root" rev-parse HEAD
 			git -C "$root" --no-optional-locks status --porcelain=v1 --untracked-files=all
 			git -C "$root" --no-optional-locks diff HEAD
 			while IFS= read -r -d '' path; do
-				blob=$(git -C "$root" --no-optional-locks hash-object -- "$path") || exit 1
-				printf '%s %s\n' "$blob" "$path"
+				path=${path%/}
+				if [ -d "$root/$path" ] && [ ! -L "$root/$path" ]; then
+					# An untracked nested repository is one directory entry, and
+					# hash-object cannot hash the directory.
+					(cd "$root/$path" && find . -mindepth 1 \( -type f -o -type l \) -print0) > "$nested" || exit 1
+					while IFS= read -r -d '' sub; do
+						hash_untracked "$root" "$path/${sub#./}" || exit 1
+					done < "$nested"
+				else
+					hash_untracked "$root" "$path" || exit 1
+				fi
 			done < "$list"
 		} > "$out"
 		cksum < "$out"
