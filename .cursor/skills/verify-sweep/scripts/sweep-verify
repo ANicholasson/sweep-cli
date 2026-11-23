@@ -49,6 +49,39 @@ hash_untracked() {
 	printf '%s %s\n' "$blob" "$rel"
 }
 
+# Hash the files of an untracked nested repository. Its .git directory and the
+# paths it ignores are left out, so a fetch, a status or a build output there
+# does not change the checksum.
+hash_untracked_dir() {
+	local root=$1 dir=$2 top parent names rel
+	top=$(git -C "$root/$dir" rev-parse --show-toplevel 2> /dev/null) || return 1
+	parent=$(git -C "$root/$dir/.." rev-parse --show-toplevel 2> /dev/null || true)
+	# A directory that is not its own repository walks up to the parent.
+	[ "$top" != "$parent" ] || return 1
+	names=$(mktemp)
+	git -C "$root/$dir" --no-optional-locks ls-files --cached --others --exclude-standard -z > "$names" || {
+		rm -f "$names"
+		return 1
+	}
+	while IFS= read -r -d '' rel; do
+		rel=${rel%/}
+		if [ -d "$root/$dir/$rel" ] && [ ! -L "$root/$dir/$rel" ]; then
+			hash_untracked_dir "$root" "$dir/$rel" || {
+				rm -f "$names"
+				return 1
+			}
+		elif [ ! -e "$root/$dir/$rel" ] && [ ! -L "$root/$dir/$rel" ]; then
+			printf 'missing %s\n' "$dir/$rel"
+		else
+			hash_untracked "$root" "$dir/$rel" || {
+				rm -f "$names"
+				return 1
+			}
+		fi
+	done < "$names"
+	rm -f "$names"
+}
+
 checkout_state() {
 	local root=$1
 	# git diff HEAD omits untracked files, so an edit to one would leave this
@@ -56,9 +89,8 @@ checkout_state() {
 	(
 		list=$(mktemp)
 		out=$(mktemp)
-		nested=$(mktemp)
 		# An EXIT trap that only removes the files would report success after a failed hash.
-		trap 'status=$?; rm -f "$list" "$out" "$nested"; exit "$status"' EXIT
+		trap 'status=$?; rm -f "$list" "$out"; exit "$status"' EXIT
 		git -C "$root" --no-optional-locks ls-files --others --exclude-standard -z > "$list"
 		{
 			git -C "$root" rev-parse HEAD
@@ -69,10 +101,7 @@ checkout_state() {
 				if [ -d "$root/$path" ] && [ ! -L "$root/$path" ]; then
 					# An untracked nested repository is one directory entry, and
 					# hash-object cannot hash the directory.
-					(cd "$root/$path" && find . -mindepth 1 \( -type f -o -type l \) -print0) > "$nested" || exit 1
-					while IFS= read -r -d '' sub; do
-						hash_untracked "$root" "$path/${sub#./}" || exit 1
-					done < "$nested"
+					hash_untracked_dir "$root" "$path" || exit 1
 				else
 					hash_untracked "$root" "$path" || exit 1
 				fi
