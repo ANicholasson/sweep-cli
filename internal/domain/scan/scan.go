@@ -48,8 +48,10 @@ type Unreadable struct {
 // its Candidates. A Candidate is left out by its file identity, so another
 // spelling of the same directory does not count. A Candidate with no Project
 // takes the newest modification inside it. That time is a modification time,
-// never an access time. A Link is not followed. A Candidate is Stale when
-// its Last used is older than domain.StaleAfter before now.
+// never an access time. A Link is not followed. A Candidate is not Stale
+// when a directory in its Project could not be read, because recent work
+// could be inside it. Otherwise it is Stale when its Last used is older
+// than domain.StaleAfter before now.
 //
 // It cannot fail. What it could not read is in the Result.
 func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time) Result {
@@ -146,36 +148,43 @@ func (s *scanner) candidate(dir Entry, r recogniser, project string) {
 // stamp sets Last used and Stale. Candidates of one Project share one time.
 // A Candidate with no Project is measured on its own, from the files inside it.
 func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now time.Time) {
-	shared := map[string]time.Time{}
-	seen := map[string]bool{}
+	type age struct {
+		at      time.Time
+		blocked bool
+	}
+	known := map[string]age{}
 	staleBefore := now.Add(-domain.StaleAfter)
 	for i := range candidates {
 		c := &candidates[i]
 		var used time.Time
+		var blocked bool
 		if c.Project == "" {
-			used = s.newest(c.Path, nil)
-		} else if seen[c.Project] {
-			used = shared[c.Project]
+			used, blocked = s.newest(c.Path, nil)
+		} else if got, ok := known[c.Project]; ok {
+			used, blocked = got.at, got.blocked
 		} else {
-			used = s.newest(c.Project, skip)
-			shared[c.Project] = used
-			seen[c.Project] = true
+			used, blocked = s.newest(c.Project, skip)
+			known[c.Project] = age{used, blocked}
 		}
 		c.LastUsed = used
-		c.Stale = used.Before(staleBefore)
+		c.Stale = !blocked && used.Before(staleBefore)
 	}
 }
 
 // newest is the newest modification of the regular files at root and beneath
 // it. A directory whose file identity is in skip is a Candidate and is not
-// entered, whichever path reaches it. A Link is not followed.
-func (s *scanner) newest(root string, skip map[FileID]bool) time.Time {
+// entered, whichever path reaches it. A Link is not followed. The bool is
+// true when a directory could not be read, so what is inside it is unknown.
+// A path discovery already could not read is not reported again.
+func (s *scanner) newest(root string, skip map[FileID]bool) (time.Time, bool) {
 	var newest time.Time
+	var blocked bool
 	var walk func(string)
 	walk = func(dir string) {
 		entries, err := s.files.List(dir)
 		if err != nil {
-			s.unread(dir, err)
+			s.noteUnread(dir, err)
+			blocked = true
 			return
 		}
 		for _, e := range entries {
@@ -183,7 +192,8 @@ func (s *scanner) newest(root string, skip map[FileID]bool) time.Time {
 			case Dir:
 				space, err := s.files.Space(e.Path)
 				if err != nil {
-					s.unread(e.Path, err)
+					s.noteUnread(e.Path, err)
+					blocked = true
 					continue
 				}
 				if skip[space.File] {
@@ -193,7 +203,7 @@ func (s *scanner) newest(root string, skip map[FileID]bool) time.Time {
 			case File:
 				mod, err := s.files.Modified(e.Path)
 				if err != nil {
-					s.unread(e.Path, err)
+					s.noteUnread(e.Path, err)
 					continue
 				}
 				if mod.After(newest) {
@@ -203,7 +213,20 @@ func (s *scanner) newest(root string, skip map[FileID]bool) time.Time {
 		}
 	}
 	walk(root)
-	return newest
+	return newest, blocked
+}
+
+// noteUnread records a path the Last used walk could not read, unless that
+// path is already recorded. Discovery can meet one path twice, through a
+// Root inside a Candidate and again through the Root that holds it, and
+// those two stay. This walk is not a second Root.
+func (s *scanner) noteUnread(path string, err error) {
+	for _, u := range s.unreadable {
+		if u.Path == path {
+			return
+		}
+	}
+	s.unread(path, err)
 }
 
 func (s *scanner) size(path string, own Space) domain.Size {

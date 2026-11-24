@@ -35,9 +35,9 @@ func TestACandidateWithNoProjectTakesTheNewestModificationInsideIt(t *testing.T)
 	}
 	s := scanner{files: files}
 
-	got := s.newest(entry, nil)
+	got, blocked := s.newest(entry, nil)
 
-	if !got.Equal(newer) {
+	if blocked || !got.Equal(newer) {
 		t.Errorf("Last used = %s, want %s, the newest file inside the Candidate", got, newer)
 	}
 	if len(s.unreadable) != 0 {

@@ -461,6 +461,72 @@ func TestTouchingASourceFileClearsStaleAndACandidateFileDoesNot(t *testing.T) {
 	}
 }
 
+func TestAnUnreadableDirectoryInAProjectIsListedOnceAndIsNotStale(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("only an account that is not root can be refused a directory by its mode")
+	}
+	b := build(t)
+	top := t.TempDir()
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	for _, rel := range []string{
+		"app/package.json",
+		"app/src/index.js",
+		"app/node_modules/a/index.js",
+		"app/sub/package.json",
+		"app/sub/src/index.js",
+		"app/sub/node_modules/b/index.js",
+		"app/sub/sealed/keep.js",
+	} {
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sealed := filepath.Join(top, "app", "sub", "sealed")
+	if err := os.Chmod(sealed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0o755) })
+
+	root := filepath.Join(top, "app")
+	got := b.run(t, top, "scan", "--json", root)
+	if got.status != 1 {
+		t.Fatalf("exit status %d, stderr %q, want 1", got.status, got.stderr)
+	}
+	out := decode(t, got)
+	if len(out.Unreadable) != 1 || !sameDir(t, out.Unreadable[0].Path, sealed) {
+		t.Errorf("unreadable = %+v, want %s once", out.Unreadable, sealed)
+	}
+	if len(out.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want the Project and the nested Project", out.Candidates)
+	}
+	for _, c := range out.Candidates {
+		if c.Stale {
+			t.Errorf("%s is Stale, and its Project holds a directory that could not be read", c.Path)
+		}
+	}
+
+	table := b.run(t, top, "scan", root)
+	if table.status != 1 {
+		t.Fatalf("table exit status %d, want 1", table.status)
+	}
+	listed := 0
+	for _, line := range strings.Split(table.stdout, "\n") {
+		if strings.Contains(line, sealed) {
+			listed++
+		}
+	}
+	if listed != 1 {
+		t.Errorf("the table lists %s on %d lines\n%s", sealed, listed, table.stdout)
+	}
+}
+
 func TestAScanThatCannotReadADirectoryListsItAndExitsOne(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("only an account that is not root can be refused a directory by its mode")
