@@ -36,6 +36,8 @@ sweep deletes files, so these rules are non-negotiable:
    root, and never touch a path outside the roots.
 3. If anything changed between the plan and the delete, skip that path.
 
+A Scan does not close one case. A directory above the one being listed can be swapped for a Link and then followed. A Clean must.
+
 Deleted items go to the OS trash by default. Permanent delete is opt-in.
 
 ## The gate

@@ -10,10 +10,11 @@ import (
 )
 
 // Resolve returns path as an absolute path, with a Link at its end followed
-// to a path that is not a Link. A chain is followed here and not again. An
-// ancestor that is a Link stays in the spelling, so a Root that is not
-// itself a Link is unchanged. filepath.EvalSymlinks leaves a Windows
-// junction alone, so this follows one itself.
+// to a path that is not a Link. A chain is followed here and not again. A
+// relative target, including "..", is applied after every Link on the way
+// to that Link has been followed. A path that is not itself a Link keeps
+// the caller's spelling. filepath.EvalSymlinks leaves a Windows junction
+// alone, so this follows a junction itself.
 func Resolve(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -37,9 +38,25 @@ func resolve(path string, hops int) (string, error) {
 	if !ok {
 		return filepath.Clean(path), nil
 	}
-	// Walk the target one part at a time. Cleaning ".." before the next
-	// Link is followed would land on a sibling of that Link.
-	return walk(filepath.Dir(path), target, hops+1)
+	// ".." in the target is the parent of the directory the Link is in,
+	// after Links on the way there have been followed. The spelling of
+	// that directory still contains those Links, so it is the wrong base.
+	base, err := resolveDir(filepath.Dir(path), hops)
+	if err != nil {
+		return "", err
+	}
+	return walk(base, target, hops+1)
+}
+
+// resolveDir follows every Link in path. path is the directory that holds
+// the Link about to be followed.
+func resolveDir(path string, hops int) (string, error) {
+	vol := volumeRoot(path)
+	rest := path
+	if v := filepath.VolumeName(path); v != "" {
+		rest = path[len(v):]
+	}
+	return descend(vol, components(rest), hops)
 }
 
 func walk(dir, target string, hops int) (string, error) {
@@ -49,9 +66,17 @@ func walk(dir, target string, hops int) (string, error) {
 	cur := dir
 	rest := target
 	if filepath.IsAbs(target) {
-		cur, rest = volumeRoot(target), target[len(filepath.VolumeName(target)):]
+		cur = volumeRoot(target)
+		if v := filepath.VolumeName(target); v != "" {
+			rest = target[len(v):]
+		}
 	}
-	for _, part := range components(rest) {
+	return descend(cur, components(rest), hops)
+}
+
+func descend(dir string, parts []string, hops int) (string, error) {
+	cur := dir
+	for _, part := range parts {
 		switch part {
 		case "", ".":
 			continue
@@ -76,7 +101,8 @@ func walk(dir, target string, hops int) (string, error) {
 			cur = next
 			continue
 		}
-		cur, err = walk(cur, followed, hops+1)
+		hops++
+		cur, err = walk(cur, followed, hops)
 		if err != nil {
 			return "", err
 		}

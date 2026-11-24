@@ -264,6 +264,56 @@ func TestScanOfTheFixture(t *testing.T) {
 
 }
 
+func TestALinkRootReachedThroughALinkAppliesDotDot(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	for _, p := range []string{
+		filepath.Join(top, "deep", "target", "node_modules", "a.js"),
+		filepath.Join(top, "target", "node_modules", "b.js"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(top, "deep", "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		filepath.Join(top, "deep", "target", "package.json"),
+		filepath.Join(top, "target", "package.json"),
+	} {
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("deep", "dir"), filepath.Join(top, "alias")); err != nil {
+		if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+			t.Skipf("this account may not make a symlink: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../target", filepath.Join(top, "deep", "dir", "rootlink")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := b.run(t, top, "scan", "--json", filepath.Join("alias", "rootlink"))
+	if got.status != 0 || got.stderr != "" {
+		t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+	}
+	out := decode(t, got)
+	want := filepath.Join(top, "deep", "target", "node_modules")
+	decoy := filepath.Join(top, "target", "node_modules")
+	if len(out.Candidates) != 1 || !sameDir(t, out.Candidates[0].Path, want) || sameDir(t, out.Candidates[0].Path, decoy) {
+		t.Errorf("candidates = %+v, want %s", out.Candidates, want)
+	}
+	if len(out.Roots) != 1 || !sameDir(t, out.Roots[0], filepath.Join(top, "deep", "target")) || sameDir(t, out.Roots[0], filepath.Join(top, "target")) {
+		t.Errorf("roots = %v, want %s", out.Roots, filepath.Join(top, "deep", "target"))
+	}
+}
+
 func TestAScanThatCannotReadADirectoryListsItAndExitsOne(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("only an account that is not root can be refused a directory by its mode")

@@ -39,7 +39,7 @@ func TestResolveLeavesADirectoryAndFollowsAChainOfLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != real {
+	if !sameDir(t, got, real) {
 		t.Errorf("Resolve of a chain = %q, want %q", got, real)
 	}
 	info, err := os.Lstat(got)
@@ -77,9 +77,52 @@ func TestResolveFollowsALinkBeforeDotDot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
+	if !sameDir(t, got, want) || sameDir(t, got, decoy) {
 		t.Errorf("Resolve = %s, want %s", got, want)
 	}
+}
+
+func TestResolveAppliesDotDotFromTheDirectoryTheLinkIsIn(t *testing.T) {
+	dir := t.TempDir()
+	want := filepath.Join(dir, "mid", "wanted")
+	decoy := filepath.Join(dir, "wanted")
+	for _, p := range []string{want, decoy, filepath.Join(dir, "mid", "inner", "place")} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("mid", "inner"), filepath.Join(dir, "outer")); err != nil {
+		if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+			t.Skipf("this account may not make a symlink: %v", err)
+		}
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "outer", "place", "link")
+	// Join would remove ".." before the target is stored.
+	if err := os.Symlink("../../wanted", link); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Resolve(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameDir(t, got, want) || sameDir(t, got, decoy) {
+		t.Errorf("Resolve = %s, want %s", got, want)
+	}
+}
+
+func sameDir(t *testing.T, a, b string) bool {
+	t.Helper()
+	x, err := os.Stat(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y, err := os.Stat(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return os.SameFile(x, y)
 }
 
 func TestDiskPassesTheFilesContract(t *testing.T) {
