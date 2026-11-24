@@ -45,9 +45,11 @@ type Unreadable struct {
 // whatever order the Ecosystems come in.
 //
 // Last used is the newest modification among a Project's own files, outside
-// its Candidates. A Candidate with no Project takes the newest modification
-// inside it. That time is a modification time, never an access time. A
-// Candidate is Stale when it is older than domain.StaleAfter before now.
+// its Candidates. A Candidate is left out by its file identity, so another
+// spelling of the same directory does not count. A Candidate with no Project
+// takes the newest modification inside it. That time is a modification time,
+// never an access time. A Link is not followed. A Candidate is Stale when
+// its Last used is older than domain.StaleAfter before now.
 //
 // It cannot fail. What it could not read is in the Result.
 func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time) Result {
@@ -63,12 +65,15 @@ func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.
 		s.enter(string(root))
 	}
 	var candidates []domain.Candidate
+	skip := map[FileID]bool{}
 	for _, f := range s.found {
-		if !s.inside[f.id] {
-			candidates = append(candidates, f.candidate)
+		if s.inside[f.id] {
+			continue
 		}
+		candidates = append(candidates, f.candidate)
+		skip[f.id] = true
 	}
-	s.stamp(candidates, now)
+	s.stamp(candidates, skip, now)
 	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable}
 }
 
@@ -140,11 +145,7 @@ func (s *scanner) candidate(dir Entry, r recogniser, project string) {
 
 // stamp sets Last used and Stale. Candidates of one Project share one time.
 // A Candidate with no Project is measured on its own, from the files inside it.
-func (s *scanner) stamp(candidates []domain.Candidate, now time.Time) {
-	skip := map[string]bool{}
-	for _, c := range candidates {
-		skip[c.Path] = true
-	}
+func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now time.Time) {
 	shared := map[string]time.Time{}
 	seen := map[string]bool{}
 	staleBefore := now.Add(-domain.StaleAfter)
@@ -166,8 +167,9 @@ func (s *scanner) stamp(candidates []domain.Candidate, now time.Time) {
 }
 
 // newest is the newest modification of the regular files at root and beneath
-// it. A path in skip is a Candidate and is not entered. A Link is not followed.
-func (s *scanner) newest(root string, skip map[string]bool) time.Time {
+// it. A directory whose file identity is in skip is a Candidate and is not
+// entered, whichever path reaches it. A Link is not followed.
+func (s *scanner) newest(root string, skip map[FileID]bool) time.Time {
 	var newest time.Time
 	var walk func(string)
 	walk = func(dir string) {
@@ -177,11 +179,16 @@ func (s *scanner) newest(root string, skip map[string]bool) time.Time {
 			return
 		}
 		for _, e := range entries {
-			if skip[e.Path] {
-				continue
-			}
 			switch e.Is {
 			case Dir:
+				space, err := s.files.Space(e.Path)
+				if err != nil {
+					s.unread(e.Path, err)
+					continue
+				}
+				if skip[space.File] {
+					continue
+				}
 				walk(e.Path)
 			case File:
 				mod, err := s.files.Modified(e.Path)
