@@ -120,6 +120,42 @@ func TestAScanNeverEntersALinkAndNeverListsOne(t *testing.T) {
 	}
 }
 
+// offered names a Candidate outside the Root and a Link a Rule would
+// recognise. The fake cannot: its tree stays beneath its top, and a Link
+// there has no manifest beside it.
+type offered struct{ n uint64 }
+
+func (o *offered) List(dir string) ([]scan.Entry, error) {
+	switch dir {
+	case sweeptest.Top:
+		return []scan.Entry{
+			{Name: "package.json", Path: sweeptest.Top + "/package.json", Is: scan.File},
+			{Name: "node_modules", Path: "/outside/node_modules", Is: scan.Dir},
+			{Name: "app", Path: sweeptest.Top + "/app", Is: scan.Dir},
+		}, nil
+	case sweeptest.Top + "/app":
+		return []scan.Entry{
+			{Name: "package.json", Path: sweeptest.Top + "/app/package.json", Is: scan.File},
+			{Name: "node_modules", Path: sweeptest.Top + "/app/node_modules", Is: scan.Link},
+		}, nil
+	default:
+		return nil, errors.New(dir)
+	}
+}
+
+func (o *offered) Space(string) (scan.Space, error) {
+	o.n++
+	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: o.n}}, nil
+}
+
+func TestAScanDropsAPathOutsideTheRootAndALink(t *testing.T) {
+	got := scan.Scan(&offered{}, sweeptest.Git{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+
+	if len(got.Candidates) != 0 || len(got.Unreadable) != 0 {
+		t.Errorf("Candidates = %+v, Unreadable = %v, want neither", got.Candidates, got.Unreadable)
+	}
+}
+
 func TestTheGitRuleKeepsAPathOutOfTheCandidates(t *testing.T) {
 	files := sweeptest.NewFiles(sweeptest.Tree{
 		"app/package.json":                       sweeptest.File{Bytes: 1},

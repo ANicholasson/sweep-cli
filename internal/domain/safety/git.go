@@ -1,5 +1,5 @@
-// Package safety holds the Safety rules. A Scan applies the Git rule, and a
-// Clean calls the same check again before it touches a path.
+// Package safety holds the Safety rules. A Scan applies the Git rule and the
+// Root rule, and a Clean calls the same checks again before it touches a path.
 package safety
 
 // State is what the Git rule knows about one path.

@@ -36,4 +36,8 @@ func TestAJunctionIsALink(t *testing.T) {
 	if of.File == to.File {
 		t.Errorf("the junction has the FileID of the directory it leads to, so Space followed it")
 	}
+	_, listErr := Disk{}.List(junction)
+	if listErr == nil {
+		t.Error("List of a junction gave no error")
+	}
 }

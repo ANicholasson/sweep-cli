@@ -13,7 +13,8 @@ Status: early development.
 A Scan looks beneath each Root, or beneath the current directory when you
 give none, and lists every Candidate a Rule recognises, such as a
 `node_modules` beside a `package.json`, with its Size, Kind, path and
-Reason. It leaves out a path that holds a file git tracks, and a path
+Reason. A Root that is a Link is resolved once, and a Link beneath a Root
+is not followed. It leaves out a path that holds a file git tracks, and a path
 when git is missing or cannot answer. A path outside a work tree is
 still listed, and so is a path inside one that holds nothing git tracks.
 It prints the Roots it used, and it changes nothing. `--json` prints the

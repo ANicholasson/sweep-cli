@@ -36,9 +36,10 @@ type Unreadable struct {
 // Shared cache Rules alone. A directory the Git rule keeps is not a
 // Candidate.
 //
-// It never enters a Candidate, a directory the Git rule keeps, or a Link.
-// Nothing inside a Candidate is listed, and no Candidate is listed twice,
-// whatever order the Roots come in and however they overlap. When two Rules
+// It never enters a Candidate, a directory the Git rule keeps, or a Link,
+// and it never enters or reports a path that is not beneath the Root it is
+// walking. Nothing inside a Candidate is listed, and no Candidate is listed
+// twice, whatever order the Roots come in and however they overlap. When two Rules
 // recognise one directory, it is listed under the Rule of the Ecosystem
 // whose Name sorts first, and under the earlier of that Ecosystem's Rules,
 // whatever order the Ecosystems come in.
@@ -54,7 +55,7 @@ func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.
 		inside: map[FileID]bool{},
 	}
 	for _, root := range roots {
-		s.enter(string(root))
+		s.enter(string(root), string(root))
 	}
 	result := Result{Roots: slices.Clone(roots), Unreadable: s.unreadable}
 	for _, f := range s.found {
@@ -82,7 +83,10 @@ type found struct {
 	candidate domain.Candidate
 }
 
-func (s *scanner) enter(path string) {
+func (s *scanner) enter(root, path string) {
+	if !safety.Beneath(root, path, false) {
+		return
+	}
 	space, err := s.files.Space(path)
 	if err != nil {
 		s.unread(path, err)
@@ -98,18 +102,18 @@ func (s *scanner) enter(path string) {
 		return
 	}
 	for _, e := range entries {
-		if e.Is != Dir {
+		if !safety.Beneath(root, e.Path, e.Is == Link) || e.Is != Dir {
 			continue
 		}
 		if r, ok := s.rules.recognise(e, entries); ok {
-			s.candidate(e, r)
+			s.candidate(root, e, r)
 			continue
 		}
-		s.enter(e.Path)
+		s.enter(root, e.Path)
 	}
 }
 
-func (s *scanner) candidate(dir Entry, r recogniser) {
+func (s *scanner) candidate(root string, dir Entry, r recogniser) {
 	space, err := s.files.Space(dir.Path)
 	if err != nil {
 		s.unread(dir.Path, err)
@@ -124,13 +128,13 @@ func (s *scanner) candidate(dir Entry, r recogniser) {
 	}
 	s.found = append(s.found, found{space.File, domain.Candidate{
 		Path:      dir.Path,
-		Size:      s.size(dir.Path, space),
+		Size:      s.size(root, dir.Path, space),
 		Ecosystem: r.ecosystem,
 		Rule:      r.rule,
 	}})
 }
 
-func (s *scanner) size(path string, own Space) domain.Size {
+func (s *scanner) size(root, path string, own Space) domain.Size {
 	counted := map[FileID]bool{own.File: true}
 	total := own.Bytes
 	var add func(dir string)
@@ -141,6 +145,9 @@ func (s *scanner) size(path string, own Space) domain.Size {
 			return
 		}
 		for _, e := range entries {
+			if !safety.Beneath(root, e.Path, false) {
+				continue
+			}
 			space, err := s.files.Space(e.Path)
 			if err != nil {
 				s.unread(e.Path, err)
