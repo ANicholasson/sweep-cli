@@ -30,8 +30,19 @@ type Local struct {
 
 // dfWait is how long a Scan waits for docker system df. A normal answer
 // returns well inside it. Past it, Docker data is unread and the Scan
-// finishes, so a stalled daemon cannot hold the Scan open.
+// finishes.
 const dfWait = 5 * time.Second
+
+// dfPipeWait is how long to wait, after that deadline, for the output
+// pipes to close. A child the program left behind can hold them open, as
+// a script that runs sleep does, and without this the Scan would wait for
+// that child.
+const dfPipeWait = 100 * time.Millisecond
+
+// dfOutputMax is the most output a Scan will read. The json rows of
+// docker system df are a handful of short lines. Anything larger is not
+// that answer.
+const dfOutputMax = 64 << 10
 
 var _ scan.Docker = Local{}
 
@@ -55,27 +66,51 @@ func (l Local) Data() domain.DockerData {
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "system", "df", "--format", dfFormat)
-	out, err := cmd.Output()
-	if err != nil {
-		return domain.Unread(why(err))
+	cmd.WaitDelay = dfPipeWait
+	group(cmd)
+	stdout := &cappedBuffer{max: dfOutputMax}
+	stderr := &cappedBuffer{max: dfOutputMax}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if err != nil || stdout.over || stderr.over {
+		return domain.Unread(why(err, stderr.String()))
 	}
-	size, err := parseDF(out)
+	size, err := parseDF(stdout.Bytes())
 	if err != nil {
 		return domain.Unread("docker did not answer")
 	}
 	return domain.Reported(size)
 }
 
-func why(err error) string {
+func why(err error, stderr string) string {
 	if missing(err) {
 		return "docker is missing"
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && daemonDown(string(exit.Stderr)) {
+	if daemonDown(stderr) {
 		return "docker is not running"
 	}
 	return "docker did not answer"
 }
+
+// cappedBuffer stores at most max bytes. Past that, Write fails and the
+// rest is never read.
+type cappedBuffer struct {
+	buf  bytes.Buffer
+	max  int
+	over bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if b.over || b.buf.Len()+len(p) > b.max {
+		b.over = true
+		return 0, errors.New("output cap")
+	}
+	return b.buf.Write(p)
+}
+
+func (b *cappedBuffer) Bytes() []byte  { return b.buf.Bytes() }
+func (b *cappedBuffer) String() string { return b.buf.String() }
 
 func missing(err error) bool {
 	var run *exec.Error

@@ -105,6 +105,26 @@ func TestLocalReadsSystemDFAndNothingElse(t *testing.T) {
 	})
 }
 
+func TestPlainGoVersionDropsAToolchainSuffix(t *testing.T) {
+	if got := plainGoVersion("go1.27.4-X:nodwarf5"); got != "1.27.4" {
+		t.Fatalf("plainGoVersion = %q, want 1.27.4", got)
+	}
+	if got := plainGoVersion("go1.27.4"); got != "1.27.4" {
+		t.Fatalf("plainGoVersion = %q, want 1.27.4", got)
+	}
+}
+
+// plainGoVersion is the go line of the stand-in's go.mod. A toolchain
+// suffix, such as -X:nodwarf5, is not a version that line accepts.
+func plainGoVersion(v string) string {
+	v = strings.TrimPrefix(v, "go")
+	i := 0
+	for i < len(v) && (v[i] == '.' || (v[i] >= '0' && v[i] <= '9')) {
+		i++
+	}
+	return v[:i]
+}
+
 func TestLocalStopsWaitingWhenDockerStalls(t *testing.T) {
 	bin := buildStub(t)
 	t.Setenv("SWEEP_STUB_MODE", "hang")
@@ -116,6 +136,39 @@ func TestLocalStopsWaitingWhenDockerStalls(t *testing.T) {
 	}
 	if elapsed > 2*time.Second {
 		t.Fatalf("Data waited %s, want the deadline to end it", elapsed)
+	}
+}
+
+func TestLocalStopsWaitingWhenAChildHoldsTheOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script, which Windows does not run")
+	}
+	script := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	got := (Local{Bin: script, Wait: 200 * time.Millisecond}).Data()
+	elapsed := time.Since(started)
+	if _, ok := got.Size(); ok || got.Mark() != "docker did not answer" {
+		t.Fatalf("Data() mark = %q, want docker did not answer and no size", got.Mark())
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("Data waited %s, want the deadline to end it while sleep 30 is still running", elapsed)
+	}
+}
+
+func TestCappedBufferStopsAtTheCap(t *testing.T) {
+	var buf cappedBuffer
+	buf.max = 4
+	if _, err := buf.Write([]byte("abcd")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buf.Write([]byte("e")); err == nil || !buf.over {
+		t.Fatal("a write past the cap was stored")
+	}
+	if buf.String() != "abcd" {
+		t.Fatalf("buffer = %q, want the bytes under the cap", buf.String())
 	}
 }
 
@@ -149,7 +202,7 @@ func buildStub(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(stubSource), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mod := "module stubdocker\n\ngo " + strings.TrimPrefix(runtime.Version(), "go") + "\n"
+	mod := "module stubdocker\n\ngo " + plainGoVersion(runtime.Version()) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0o644); err != nil {
 		t.Fatal(err)
 	}
