@@ -31,6 +31,7 @@ func TestBeneathFollowsTheRootRule(t *testing.T) {
 		{name: "the extended prefix", root: `C:\Projects`, path: `\\?\C:\Projects\app`, want: true},
 		{name: "the extended UNC prefix", root: `\\server\share\a`, path: `\\?\UNC\server\share\a\b`, want: true},
 		{name: "a drive-relative path", root: `C:\Projects`, path: `C:Projects\app`, want: false},
+		{name: "a backslash in a POSIX name", root: "/projects", path: "/projects/\\../app", want: true},
 		{name: "a relative path", root: "/projects", path: "projects/app", want: false},
 		{name: "an empty path", root: "/projects", path: "", want: false},
 		{name: "a NUL", root: "/projects", path: "/projects/a\x00b", want: false},

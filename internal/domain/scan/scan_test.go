@@ -156,6 +156,40 @@ func TestAScanDropsAPathOutsideTheRootAndALink(t *testing.T) {
 	}
 }
 
+// namedWithABackslash is a directory whose name contains a backslash.
+// On Linux and macOS that is a legal name. The fake's paths are
+// slash-separated and cannot spell it.
+type namedWithABackslash struct{ n uint64 }
+
+func (o *namedWithABackslash) List(dir string) ([]scan.Entry, error) {
+	const held = sweeptest.Top + `/\..`
+	switch dir {
+	case sweeptest.Top:
+		return []scan.Entry{{Name: `\..`, Path: held, Is: scan.Dir}}, nil
+	case held:
+		return []scan.Entry{
+			{Name: "package.json", Path: held + "/package.json", Is: scan.File},
+			{Name: "node_modules", Path: held + "/node_modules", Is: scan.Dir},
+		}, nil
+	default:
+		return nil, errors.New(dir)
+	}
+}
+
+func (o *namedWithABackslash) Space(string) (scan.Space, error) {
+	o.n++
+	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: o.n}}, nil
+}
+
+func TestAScanKeepsAPosixNameThatContainsABackslash(t *testing.T) {
+	got := scan.Scan(&namedWithABackslash{}, sweeptest.Git{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+
+	want := sweeptest.Top + `/\../node_modules`
+	if len(got.Candidates) != 1 || got.Candidates[0].Path != want {
+		t.Errorf("Candidates = %+v, want %s", got.Candidates, want)
+	}
+}
+
 func TestTheGitRuleKeepsAPathOutOfTheCandidates(t *testing.T) {
 	files := sweeptest.NewFiles(sweeptest.Tree{
 		"app/package.json":                       sweeptest.File{Bytes: 1},
