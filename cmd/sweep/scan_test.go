@@ -2,9 +2,11 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -28,6 +30,10 @@ type scanJSON struct {
 		Path  string `json:"path"`
 		Error string `json:"error"`
 	} `json:"unreadable"`
+	DockerData *struct {
+		Size *int64 `json:"size"`
+		Mark string `json:"mark"`
+	} `json:"dockerData"`
 }
 
 func decode(t *testing.T, got ran) scanJSON {
@@ -256,6 +262,50 @@ func TestScanOfTheFixture(t *testing.T) {
 		}
 	})
 
+	t.Run("Docker data is its own field and not a Candidate", func(t *testing.T) {
+		out := scan(t, dir, root)
+		if out.DockerData == nil || out.DockerData.Mark == "" {
+			t.Fatalf("dockerData = %+v, want a mark", out.DockerData)
+		}
+		for _, c := range out.Candidates {
+			if c.Kind == "Docker data" || c.Reason == "reported only" {
+				t.Errorf("candidate %+v is Docker data", c)
+			}
+		}
+		table := b.run(t, dir, "scan", root)
+		if table.status != 0 || table.stderr != "" {
+			t.Fatalf("sweep scan: exit status %d, stderr %q", table.status, table.stderr)
+		}
+		if _, rows := readTable(t, table.stdout); len(rows) != len(out.Candidates) {
+			t.Errorf("the table has %d rows and the JSON %d Candidates", len(rows), len(out.Candidates))
+		}
+		df, err := exec.Command("docker", "system", "df", "--format", "{{json .}}").Output()
+		if err != nil {
+			if out.DockerData.Size != nil {
+				t.Errorf("docker system df failed (%v) but the Scan gives a size", err)
+			}
+			switch out.DockerData.Mark {
+			case "docker is missing", "docker is not running", "docker did not answer":
+			default:
+				t.Errorf("mark = %q, want why Docker data was not read", out.DockerData.Mark)
+			}
+			if !strings.Contains(table.stdout, "\nDocker data  "+out.DockerData.Mark+"\n") {
+				t.Errorf("table is\n%s\nwant the Docker data line", table.stdout)
+			}
+			return
+		}
+		want, err := dockerImagesAndBuildCache(df)
+		if err != nil {
+			t.Fatalf("docker system df: %v\n%s", err, df)
+		}
+		if out.DockerData.Size == nil || *out.DockerData.Size != want || out.DockerData.Mark != "reported only" {
+			t.Errorf("dockerData = %+v, want size %d marked reported only", out.DockerData, want)
+		}
+		if !strings.Contains(table.stdout, "reported only") || !strings.Contains(table.stdout, "\nDocker data  ") {
+			t.Errorf("table is\n%s\nwant Docker data marked reported only", table.stdout)
+		}
+	})
+
 	t.Run("an unknown flag is a usage error", func(t *testing.T) {
 		if got := b.run(t, dir, "scan", "--jsno"); got.status != 2 || got.stdout != "" {
 			t.Errorf("exit status %d, stdout %q, want 2 and nothing", got.status, got.stdout)
@@ -371,4 +421,94 @@ func readTable(t *testing.T, out string) ([]string, []row) {
 		rows = append(rows, row{cells, value * units[unit], within, cells[1], cells[2], cells[3]})
 	}
 	return roots, rows
+}
+
+func TestDockerSystemDFTotalsAreThePrintedUnits(t *testing.T) {
+	out := []byte(strings.Join([]string{
+		`{"Type":"Images","Size":"1.5kB"}`,
+		`{"Type":"Containers","Size":"9GB"}`,
+		`{"Type":"Build Cache","Size":"2MB"}`,
+	}, "\n"))
+	got, err := dockerImagesAndBuildCache(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1.5kB is 1500 bytes and 2MB is 2000000. Containers are not part of the total.
+	if got != 1500+2_000_000 {
+		t.Errorf("total = %d, want 2001500", got)
+	}
+	n, err := dockerHuman("1.086GB")
+	if err != nil || n != 1_086_000_000 {
+		t.Errorf("1.086GB = %d, %v, want 1086000000", n, err)
+	}
+}
+
+// dockerImagesAndBuildCache is the Images total plus the Build Cache total
+// from `docker system df --format '{{json .}}'`. It is the check against
+// sweep, so it does not call sweep.
+func dockerImagesAndBuildCache(out []byte) (int64, error) {
+	var (
+		images, cache       int64
+		sawImages, sawCache bool
+	)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var row struct {
+			Type string
+			Size string
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return 0, err
+		}
+		if row.Type != "Images" && row.Type != "Build Cache" {
+			continue
+		}
+		n, err := dockerHuman(row.Size)
+		if err != nil {
+			return 0, err
+		}
+		if row.Type == "Images" {
+			if sawImages {
+				return 0, fmt.Errorf("duplicate %s", row.Type)
+			}
+			images, sawImages = n, true
+			continue
+		}
+		if sawCache {
+			return 0, fmt.Errorf("duplicate %s", row.Type)
+		}
+		cache, sawCache = n, true
+	}
+	if !sawImages || !sawCache {
+		return 0, fmt.Errorf("docker system df has no Images or Build Cache total")
+	}
+	return images + cache, nil
+}
+
+func dockerHuman(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	i := len(s)
+	for i > 0 {
+		c := s[i-1]
+		if (c >= '0' && c <= '9') || c == '.' {
+			break
+		}
+		i--
+	}
+	number, unit := strings.TrimSpace(s[:i]), strings.TrimSpace(s[i:])
+	value, err := strconv.ParseFloat(number, 64)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("size %q", s)
+	}
+	mult, ok := map[string]float64{
+		"B": 1, "kB": 1e3, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12, "PB": 1e15,
+		"KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40,
+	}[unit]
+	if !ok {
+		return 0, fmt.Errorf("unit %q", unit)
+	}
+	return int64(math.Round(value * mult)), nil
 }

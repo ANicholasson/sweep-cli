@@ -23,12 +23,21 @@ type Result struct {
 	// inside a Candidate, and again through the Root that holds the
 	// Candidate, is in it twice.
 	Unreadable []Unreadable
+	// DockerData is the space Docker images and build cache hold, or why
+	// it could not be read. It is never a Candidate.
+	DockerData domain.DockerData
 }
 
 // Unreadable is a path the Scan could not read, and why.
 type Unreadable struct {
 	Path string
 	Err  error
+}
+
+// Docker reports Docker data. It only reads: it has no method that removes
+// or changes anything.
+type Docker interface {
+	Data() domain.DockerData
 }
 
 // Scan looks beneath each Root for the directories that the InProject Rules
@@ -43,8 +52,13 @@ type Unreadable struct {
 // whose Name sorts first, and under the earlier of that Ecosystem's Rules,
 // whatever order the Ecosystems come in.
 //
+// Docker data is asked once, for the whole machine, and set on the Result.
+// It is not a Candidate. Docker missing or not answering is that value's
+// own mark, not an Unreadable path, so a Scan that cannot reach Docker is
+// still complete.
+//
 // It cannot fail. What it could not read is in the Result.
-func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.Ecosystem) Result {
+func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem) Result {
 	s := scanner{
 		files:  files,
 		git:    git,
@@ -56,7 +70,7 @@ func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.
 	for _, root := range roots {
 		s.enter(string(root))
 	}
-	result := Result{Roots: slices.Clone(roots), Unreadable: s.unreadable}
+	result := Result{Roots: slices.Clone(roots), Unreadable: s.unreadable, DockerData: docker.Data()}
 	for _, f := range s.found {
 		if !s.inside[f.id] {
 			result.Candidates = append(result.Candidates, f.candidate)

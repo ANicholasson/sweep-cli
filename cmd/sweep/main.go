@@ -16,6 +16,7 @@ import (
 	"github.com/ANicholasson/sweep-cli/internal/domain/ecosystems"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 	"github.com/ANicholasson/sweep-cli/internal/report"
+	"github.com/ANicholasson/sweep-cli/internal/system/docker"
 	"github.com/ANicholasson/sweep-cli/internal/system/files"
 	"github.com/ANicholasson/sweep-cli/internal/system/git"
 )
@@ -70,7 +71,7 @@ func scanCommand(args []string, stdout, stderr io.Writer) int {
 		return misused
 	}
 
-	result := scan.Scan(files.Disk{}, git.Local{}, roots, ecosystems.All())
+	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All())
 
 	format := report.Table
 	if *asJSON {

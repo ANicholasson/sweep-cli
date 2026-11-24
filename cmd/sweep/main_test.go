@@ -57,6 +57,25 @@ func TestNoArgumentsIsAUsageError(t *testing.T) {
 	}
 }
 
+func TestScanOffersNoFlagForDockerData(t *testing.T) {
+	var stdout, stderr strings.Builder
+
+	status := run([]string{"scan", "-h"}, &stdout, &stderr)
+
+	if status != 2 {
+		t.Errorf("exit status = %d, want 2", status)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "-json") {
+		t.Errorf("stderr = %q, want the scan flags", stderr.String())
+	}
+	if strings.Contains(strings.ToLower(stderr.String()), "docker") || strings.Contains(stderr.String(), "pick") {
+		t.Errorf("stderr = %q, want no flag that picks Docker data", stderr.String())
+	}
+}
+
 func TestScanFailsWhenStdoutCannotBeWritten(t *testing.T) {
 	var stderr strings.Builder
 
