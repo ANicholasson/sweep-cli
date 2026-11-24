@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseDFSumsImagesAndBuildCache(t *testing.T) {
@@ -94,6 +95,28 @@ func TestLocalReadsSystemDFAndNothingElse(t *testing.T) {
 			t.Fatalf("Data() mark = %q, want docker did not answer and no size", got.Mark())
 		}
 	})
+
+	t.Run("current daemon message", func(t *testing.T) {
+		t.Setenv("SWEEP_STUB_MODE", "down-api")
+		got := (Local{Bin: bin}).Data()
+		if _, ok := got.Size(); ok || got.Mark() != "docker is not running" {
+			t.Fatalf("Data() mark = %q, want docker is not running and no size", got.Mark())
+		}
+	})
+}
+
+func TestLocalStopsWaitingWhenDockerStalls(t *testing.T) {
+	bin := buildStub(t)
+	t.Setenv("SWEEP_STUB_MODE", "hang")
+	started := time.Now()
+	got := (Local{Bin: bin, Wait: 200 * time.Millisecond}).Data()
+	elapsed := time.Since(started)
+	if _, ok := got.Size(); ok || got.Mark() != "docker did not answer" {
+		t.Fatalf("Data() mark = %q, want docker did not answer and no size", got.Mark())
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("Data waited %s, want the deadline to end it", elapsed)
+	}
 }
 
 func TestLocalWhenDockerIsMissing(t *testing.T) {
@@ -150,6 +173,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -164,6 +188,11 @@ func main() {
 	case "down":
 		fmt.Fprintln(os.Stderr, "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?")
 		os.Exit(1)
+	case "down-api":
+		fmt.Fprintln(os.Stderr, "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running")
+		os.Exit(1)
+	case "hang":
+		time.Sleep(time.Hour)
 	case "bad":
 		fmt.Println("nope")
 	default:

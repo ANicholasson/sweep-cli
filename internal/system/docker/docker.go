@@ -5,6 +5,7 @@ package docker
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
@@ -22,7 +24,14 @@ import (
 type Local struct {
 	// Bin is the program to run. Empty runs docker from PATH.
 	Bin string
+	// Wait is how long docker system df may run. Zero uses dfWait.
+	Wait time.Duration
 }
+
+// dfWait is how long a Scan waits for docker system df. A normal answer
+// returns well inside it. Past it, Docker data is unread and the Scan
+// finishes, so a stalled daemon cannot hold the Scan open.
+const dfWait = 5 * time.Second
 
 var _ scan.Docker = Local{}
 
@@ -39,7 +48,13 @@ func (l Local) Data() domain.DockerData {
 	if bin == "" {
 		bin = "docker"
 	}
-	cmd := exec.Command(bin, "system", "df", "--format", dfFormat)
+	wait := l.Wait
+	if wait <= 0 {
+		wait = dfWait
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "system", "df", "--format", dfFormat)
 	out, err := cmd.Output()
 	if err != nil {
 		return domain.Unread(why(err))
@@ -75,7 +90,9 @@ func missing(err error) bool {
 func daemonDown(msg string) bool {
 	return strings.Contains(msg, "Cannot connect to the Docker daemon") ||
 		strings.Contains(msg, "Is the docker daemon running") ||
-		strings.Contains(msg, "error during connect")
+		strings.Contains(msg, "error during connect") ||
+		strings.Contains(msg, "failed to connect to the docker API") ||
+		strings.Contains(msg, "if the daemon is running")
 }
 
 // parseDF adds the Images and Build Cache sizes. Both rows must be
