@@ -3,6 +3,8 @@
 // safety.Git. Neither port has a method that writes.
 package scan
 
+import "time"
+
 // Files is the port a Scan reads the file tree through. It only reads, and
 // it never follows a Link: a Link is listed and measured as itself, and what
 // it leads to is never listed.
@@ -19,6 +21,10 @@ type Files interface {
 	// path: its own, not what a directory holds and not what a Link leads
 	// to.
 	Space(path string) (Space, error)
+
+	// Modified reports the modification time of the one file, directory or
+	// Link at path. It never reports an access time.
+	Modified(path string) (time.Time, error)
 }
 
 // Entry is one name inside a directory that was listed.

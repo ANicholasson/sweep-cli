@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 )
@@ -125,6 +126,18 @@ func FilesContract(t *testing.T, open func(t *testing.T, tree Tree) (files scan.
 		}
 	})
 
+	t.Run("Modified is the modification time, and a missing path fails", func(t *testing.T) {
+		when := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+		files, top := open(t, Tree{"a/old.js": File{Bytes: 1, Modified: when}})
+		got := modified(t, files, find(t, files, top, "a/old.js"))
+		if !got.Equal(when) {
+			t.Errorf("Modified = %s, want %s", got, when)
+		}
+		if _, err := files.Modified(top + "-gone"); err == nil {
+			t.Error("Modified of a missing path gave no error")
+		}
+	})
+
 	t.Run("a path longer than 260 characters lists and measures", func(t *testing.T) {
 		long := strings.Repeat("node_modules/a-package-with-a-long-name/", 8) + "index.js"
 		files, top := open(t, Tree{long: File{Bytes: 1}})
@@ -148,6 +161,15 @@ func space(t *testing.T, files scan.Files, e scan.Entry) scan.Space {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func modified(t *testing.T, files scan.Files, e scan.Entry) time.Time {
+	t.Helper()
+	got, err := files.Modified(e.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 func find(t *testing.T, files scan.Files, top, p string) scan.Entry {

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+	"time"
 )
 
 // Tree is a small file tree written once, as data, and built twice: in
@@ -22,8 +23,12 @@ type Tree map[string]Node
 // Node is a File, a HardLink, a Link or a Dir, and nothing else compiles.
 type Node interface{ node() }
 
-// File is a regular file that holds this many bytes.
-type File struct{ Bytes int }
+// File is a regular file that holds this many bytes. Modified is its
+// modification time, when it is set. An access time is never recorded.
+type File struct {
+	Bytes    int
+	Modified time.Time
+}
 
 // HardLink is another name for the File at the path To.
 type HardLink struct{ To string }
@@ -77,6 +82,11 @@ func OnDisk(t *testing.T, tree Tree) string {
 		switch n := tree[p].(type) {
 		case File:
 			err = write(at(p), n.Bytes)
+			// The access time is later than the modification time, so a
+			// reader of access time cannot pass the contract.
+			if err == nil && !n.Modified.IsZero() {
+				err = os.Chtimes(at(p), n.Modified.Add(48*time.Hour), n.Modified)
+			}
 		case HardLink:
 			err = os.Link(at(n.To), at(p))
 		case Link:

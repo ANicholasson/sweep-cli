@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 )
@@ -26,6 +27,15 @@ func (Disk) List(dir string) ([]scan.Entry, error) {
 		entries[i] = scan.Entry{Name: e.Name(), Path: filepath.Join(dir, e.Name()), Is: is(e.Type())}
 	}
 	return entries, nil
+}
+
+// Modified is lstat's modification time. The access time is never read.
+func (Disk) Modified(path string) (time.Time, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }
 
 // is reads a Link from the two bits the os package sets for one. A symlink
