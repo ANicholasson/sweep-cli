@@ -6,7 +6,7 @@ This directory is the maintained source for verifying what a user of `sweep` see
 
 - `H` is the helper, `.cursor/skills/verify-sweep/scripts/sweep-verify`, and `RUN` is the directory `"$H" launch` printed, from the checkout under test.
 - `"$H" doctor "$RUN"` ends with `doctor: worth driving`.
-- The Fixture at `$RUN/fixture` is as the fixture tool built it. Its Answer key (`answer-key.json`, version 1) names the Root `projects`, one Candidate `projects/web-app/node_modules` (Dependencies), and two Traps: `projects/tracked-app/node_modules` (git tracks its files) and `outside/stray-app/node_modules` (outside the Root).
+- The Fixture at `$RUN/fixture` is as the fixture tool built it. Its Answer key (`answer-key.json`, version 1) names the Root `projects`, three Candidates, all Dependencies: `projects/web-app/node_modules`, `projects/tracked-app/ignored-app/node_modules` and `projects/tracked-app/untracked-app/node_modules`. It names two Traps: `projects/tracked-app/node_modules` (git tracks its files) and `outside/stray-app/node_modules` (outside the Root).
 - Never drive a run that this verification did not launch.
 
 ## Driving conventions

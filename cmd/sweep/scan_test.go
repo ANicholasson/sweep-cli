@@ -148,20 +148,15 @@ func TestScanOfTheFixture(t *testing.T) {
 		nothingInsideACandidate(t, scan(t, dir, root))
 	})
 
-	t.Run("a Trap outside the Root is not listed", func(t *testing.T) {
+	t.Run("no Trap is listed", func(t *testing.T) {
 		out := scan(t, dir, root)
-		outside := 0
-		for _, trap := range key.Traps {
-			if trap.Path == key.Root || strings.HasPrefix(trap.Path, key.Root+"/") {
-				continue
-			}
-			outside++
-			if listed(out, at(trap.Path)) != 0 {
-				t.Errorf("the Trap %s is listed, and it is outside the Root", trap.Path)
-			}
+		if len(key.Traps) == 0 {
+			t.Fatal("the Answer key has no Trap, so this shows nothing")
 		}
-		if outside == 0 {
-			t.Fatal("the Answer key has no Trap outside the Root, so this shows nothing")
+		for _, trap := range key.Traps {
+			if listed(out, at(trap.Path)) != 0 {
+				t.Errorf("the Trap %s is listed", trap.Path)
+			}
 		}
 	})
 
@@ -300,6 +295,40 @@ func TestAScanThatCannotReadADirectoryListsItAndExitsOne(t *testing.T) {
 	}
 	if len(out.Candidates) != 1 || !sameDir(t, out.Candidates[0].Path, filepath.Join(top, "open", "node_modules")) {
 		t.Errorf("candidates = %+v, want open/node_modules, which could be read", out.Candidates)
+	}
+}
+
+func TestAScanThatCannotReadInsideACandidateListsItAndExitsOne(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("only an account that is not root can be refused a directory by its mode")
+	}
+	b := build(t)
+	top := t.TempDir()
+	for _, p := range []string{"app/package.json", "app/node_modules/a/index.js", "app/node_modules/sealed/keep.js"} {
+		if err := os.MkdirAll(filepath.Join(top, filepath.Dir(p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(top, p), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sealed := filepath.Join(top, "app", "node_modules", "sealed")
+	if err := os.Chmod(sealed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0o755) })
+
+	got := b.run(t, top, "scan", "--json", top)
+
+	if got.status != 1 {
+		t.Errorf("exit status %d, want 1", got.status)
+	}
+	out := decode(t, got)
+	if len(out.Unreadable) != 1 || !sameDir(t, out.Unreadable[0].Path, sealed) {
+		t.Errorf("unreadable = %+v, want %s", out.Unreadable, sealed)
+	}
+	if len(out.Candidates) != 1 || !sameDir(t, out.Candidates[0].Path, filepath.Join(top, "app", "node_modules")) {
+		t.Errorf("candidates = %+v, want app/node_modules", out.Candidates)
 	}
 }
 

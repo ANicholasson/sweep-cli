@@ -98,7 +98,7 @@ One of the three rules a Clean can never break and no setting can switch off: th
 _Avoid_: check, guard, policy
 
 **Git rule**:
-sweep never touches a file git tracks, or a Worktree with uncommitted changes.
+sweep never touches a file git tracks, or a Worktree with uncommitted changes. A path that holds a file git tracks is never a Candidate. A path is never a Candidate when git is missing or cannot answer.
 
 **Root rule**:
 sweep never follows a Link out of a Root and never touches a path outside the Roots.

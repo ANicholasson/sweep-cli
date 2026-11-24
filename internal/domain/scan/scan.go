@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
+	"github.com/ANicholasson/sweep-cli/internal/domain/safety"
 )
 
 // Result is what a Scan found.
@@ -32,19 +33,21 @@ type Unreadable struct {
 
 // Scan looks beneath each Root for the directories that the InProject Rules
 // of the Ecosystems recognise, and measures the Size of each. It leaves
-// Shared cache Rules alone.
+// Shared cache Rules alone. A directory the Git rule keeps is not a
+// Candidate.
 //
-// It never enters a Candidate or a Link. Nothing inside a Candidate is
-// listed, and no Candidate is listed twice, whatever order the Roots come in
-// and however they overlap. When two Rules recognise one directory, it is
-// listed under the Rule of the Ecosystem whose Name sorts first, and under
-// the earlier of that Ecosystem's Rules, whatever order the Ecosystems come
-// in.
+// It never enters a Candidate, a directory the Git rule keeps, or a Link.
+// Nothing inside a Candidate is listed, and no Candidate is listed twice,
+// whatever order the Roots come in and however they overlap. When two Rules
+// recognise one directory, it is listed under the Rule of the Ecosystem
+// whose Name sorts first, and under the earlier of that Ecosystem's Rules,
+// whatever order the Ecosystems come in.
 //
 // It cannot fail. What it could not read is in the Result.
-func Scan(files Files, roots []domain.Root, ecosystems []domain.Ecosystem) Result {
+func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.Ecosystem) Result {
 	s := scanner{
 		files:  files,
+		git:    git,
 		rules:  index(ecosystems),
 		walked: map[FileID]bool{},
 		listed: map[FileID]bool{},
@@ -64,6 +67,7 @@ func Scan(files Files, roots []domain.Root, ecosystems []domain.Ecosystem) Resul
 
 type scanner struct {
 	files  Files
+	git    safety.Git
 	rules  rules
 	walked map[FileID]bool
 	listed map[FileID]bool
@@ -115,6 +119,9 @@ func (s *scanner) candidate(dir Entry, r recogniser) {
 		return
 	}
 	s.listed[space.File] = true
+	if safety.Keeps(s.git, dir.Path) {
+		return
+	}
 	s.found = append(s.found, found{space.File, domain.Candidate{
 		Path:      dir.Path,
 		Size:      s.size(dir.Path, space),
