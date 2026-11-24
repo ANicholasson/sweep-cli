@@ -90,12 +90,15 @@ func components(path string) []string {
 	})
 }
 
+// volumeRoot is the directory at the top of path's volume. A \\?\ volume
+// names the device until a separator follows it, so the filesystem root
+// keeps that separator.
 func volumeRoot(path string) string {
 	vol := filepath.VolumeName(path)
 	if vol == "" {
 		return string(filepath.Separator)
 	}
-	if strings.HasPrefix(vol, `\\`) || strings.HasPrefix(vol, `//`) {
+	if strings.HasSuffix(vol, `/`) || strings.HasSuffix(vol, `\`) {
 		return vol
 	}
 	return vol + `\`
