@@ -49,8 +49,9 @@ type Unreadable struct {
 // spelling of the same directory does not count. A Candidate with no Project
 // takes the newest modification inside it. That time is a modification time,
 // never an access time. A Link is not followed. A Candidate is not Stale
-// when a directory in its Project could not be read, because recent work
-// could be inside it. Otherwise it is Stale when its Last used is older
+// when a directory in its Project could not be read, or a file's
+// modification time could not be read, because recent work could be in
+// what was not seen. Otherwise it is Stale when its Last used is older
 // than domain.StaleAfter before now.
 //
 // It cannot fail. What it could not read is in the Result.
@@ -174,7 +175,8 @@ func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now
 // newest is the newest modification of the regular files at root and beneath
 // it. A directory whose file identity is in skip is a Candidate and is not
 // entered, whichever path reaches it. A Link is not followed. The bool is
-// true when a directory could not be read, so what is inside it is unknown.
+// true when a directory could not be read, or a file's modification time
+// could not be read, so recent work could be in what was not seen.
 // A path discovery already could not read is not reported again.
 func (s *scanner) newest(root string, skip map[FileID]bool) (time.Time, bool) {
 	var newest time.Time
@@ -204,6 +206,7 @@ func (s *scanner) newest(root string, skip map[FileID]bool) (time.Time, bool) {
 				mod, err := s.files.Modified(e.Path)
 				if err != nil {
 					s.noteUnread(e.Path, err)
+					blocked = true
 					continue
 				}
 				if mod.After(newest) {

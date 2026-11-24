@@ -461,6 +461,52 @@ func TestTouchingASourceFileClearsStaleAndACandidateFileDoesNot(t *testing.T) {
 	}
 }
 
+func TestAnUnreadableModificationTimeIsNotStale(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("only an account that is not root can be refused a file by its directory's mode")
+	}
+	b := build(t)
+	top := t.TempDir()
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	for _, rel := range []string{"app/package.json", "app/src/index.js", "app/node_modules/a/index.js"} {
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := filepath.Join(top, "app", "src")
+	hidden := filepath.Join(src, "index.js")
+	if err := os.Chmod(src, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(src, 0o755) })
+	if _, err := os.ReadDir(src); err != nil {
+		t.Skipf("this system will not list a directory it cannot search: %v", err)
+	}
+	if _, err := os.Lstat(hidden); err == nil {
+		t.Fatal("the file's modification time can still be read, so the test shows nothing")
+	}
+
+	root := filepath.Join(top, "app")
+	got := b.run(t, top, "scan", "--json", root)
+	if got.status != 1 {
+		t.Fatalf("exit status %d, stderr %q, want 1", got.status, got.stderr)
+	}
+	out := decode(t, got)
+	if len(out.Unreadable) != 1 || filepath.Clean(out.Unreadable[0].Path) != filepath.Clean(hidden) {
+		t.Errorf("unreadable = %+v, want %s once", out.Unreadable, hidden)
+	}
+	if len(out.Candidates) != 1 || out.Candidates[0].Stale {
+		t.Errorf("candidates = %+v, want one Candidate that is not Stale", out.Candidates)
+	}
+}
+
 func TestAnUnreadableDirectoryInAProjectIsListedOnceAndIsNotStale(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("only an account that is not root can be refused a directory by its mode")
