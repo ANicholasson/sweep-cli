@@ -13,11 +13,16 @@ Status: early development.
 A Scan looks beneath each Root, or beneath the current directory when you
 give none, and lists every Candidate a Rule recognises, such as a
 `node_modules` beside a `package.json`, with its Size, Kind, path and
-Reason. It leaves out a path that holds a file git tracks, and a path
-when git is missing or cannot answer. A path outside a work tree is
+Reason. It groups Candidates by Project. Last used is the newest
+modification among that Project's own files, outside its Candidates, and
+never an access time. A Candidate last used more than 30 days ago is
+marked Stale. A Candidate with no Project takes the newest modification
+inside it. The Scan leaves out a path that holds a file git tracks, and a
+path when git is missing or cannot answer. A path outside a work tree is
 still listed, and so is a path inside one that holds nothing git tracks.
 It prints the Roots it used, and it changes nothing. `--json` prints the
-same as one JSON document with a `version` field. A Size is in bytes in
+same as one JSON document with a `version` field, and each Candidate
+carries its Project's path, `last_used` and `stale`. A Size is in bytes in
 the JSON, and it is what `du -s` reports for the path, with each
 hard-linked file counted once.
 

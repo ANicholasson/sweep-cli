@@ -12,17 +12,21 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type scanJSON struct {
 	Version    int      `json:"version"`
 	Roots      []string `json:"roots"`
 	Candidates []struct {
-		Path      string `json:"path"`
-		Size      int64  `json:"size"`
-		Kind      string `json:"kind"`
-		Ecosystem string `json:"ecosystem"`
-		Reason    string `json:"reason"`
+		Path      string    `json:"path"`
+		Size      int64     `json:"size"`
+		Kind      string    `json:"kind"`
+		Ecosystem string    `json:"ecosystem"`
+		Reason    string    `json:"reason"`
+		Project   string    `json:"project"`
+		LastUsed  time.Time `json:"last_used"`
+		Stale     bool      `json:"stale"`
 	} `json:"candidates"`
 	Unreadable []struct {
 		Path  string `json:"path"`
@@ -231,6 +235,52 @@ func TestScanOfTheFixture(t *testing.T) {
 		}
 	})
 
+	t.Run("each Candidate is grouped by Project, and Stale follows Last used", func(t *testing.T) {
+		out := scan(t, dir, root)
+		table := b.run(t, dir, "scan", root)
+		if table.status != 0 || table.stderr != "" {
+			t.Fatalf("sweep scan: exit status %d, stderr %q", table.status, table.stderr)
+		}
+		for _, c := range out.Candidates {
+			project := filepath.Dir(c.Path)
+			manifest := filepath.Join(project, "package.json")
+			info, err := os.Lstat(manifest)
+			if err != nil || !info.Mode().IsRegular() {
+				t.Errorf("%s: Project %s has no manifest", c.Path, c.Project)
+			}
+			if !sameDir(t, c.Project, project) {
+				t.Errorf("%s: Project = %s, want %s", c.Path, c.Project, project)
+			}
+			used := newestOutside(t, project, c.Path)
+			if !c.LastUsed.Equal(used) {
+				t.Errorf("%s: Last used = %s, and the newest file outside it is %s", c.Path, c.LastUsed, used)
+			}
+			stale := used.Before(time.Now().Add(-30 * 24 * time.Hour))
+			if c.Stale != stale {
+				t.Errorf("%s: Stale = %v, want %v from that file's modification time", c.Path, c.Stale, stale)
+			}
+			if !strings.Contains(table.stdout, "\n"+c.Project+"\n") {
+				t.Errorf("the table does not group %s under %s\n%s", c.Path, c.Project, table.stdout)
+			}
+			row := rowFor(t, table.stdout, c.Path)
+			if strings.Contains(row, " stale ") != c.Stale {
+				t.Errorf("the row %q marks Stale %v, and the JSON says %v", row, strings.Contains(row, " stale "), c.Stale)
+			}
+		}
+		var stale, recent bool
+		for _, c := range out.Candidates {
+			switch {
+			case strings.HasSuffix(filepath.ToSlash(c.Path), "projects/stale-app/node_modules"):
+				stale = c.Stale
+			case strings.HasSuffix(filepath.ToSlash(c.Path), "projects/recent-app/node_modules"):
+				recent = !c.Stale
+			}
+		}
+		if !stale || !recent {
+			t.Errorf("stale-app Stale = %v, recent-app not Stale = %v, want the Fixture's pair", stale, recent)
+		}
+	})
+
 	t.Run("a Scan that finds nothing writes empty lists, not null", func(t *testing.T) {
 		got := b.run(t, dir, "scan", "--json", t.TempDir())
 		if got.status != 0 {
@@ -262,6 +312,58 @@ func TestScanOfTheFixture(t *testing.T) {
 		}
 	})
 
+}
+
+func TestTouchingASourceFileClearsStaleAndACandidateFileDoesNot(t *testing.T) {
+	b := build(t)
+	dir, _ := b.buildFixture(t)
+	root := filepath.Join(dir, "projects")
+	project := filepath.Join(dir, "projects", "stale-app")
+	candidate := filepath.Join(project, "node_modules")
+	scan := func() scanJSON {
+		t.Helper()
+		got := b.run(t, dir, "scan", "--json", root)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("sweep scan --json: exit status %d, stderr %q", got.status, got.stderr)
+		}
+		return decode(t, got)
+	}
+	one := func(out scanJSON) (last time.Time, stale bool) {
+		t.Helper()
+		for _, c := range out.Candidates {
+			if sameDir(t, c.Path, candidate) {
+				return c.LastUsed, c.Stale
+			}
+		}
+		t.Fatal("the Stale Project's Candidate is not listed")
+		return time.Time{}, false
+	}
+
+	last, stale := one(scan())
+	used := newestOutside(t, project, candidate)
+	if !stale || !last.Equal(used) {
+		t.Fatalf("Last used = %s, Stale = %v, want %s and Stale", last, stale, used)
+	}
+
+	inside := filepath.Join(candidate, "fake-old", "index.js")
+	if err := os.Chtimes(inside, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	last, stale = one(scan())
+	used = newestOutside(t, project, candidate)
+	if !stale || !last.Equal(used) {
+		t.Errorf("after a file inside the Candidate changed, Last used = %s, Stale = %v, want %s and still Stale", last, stale, used)
+	}
+
+	src := filepath.Join(project, "src", "index.js")
+	if err := os.Chtimes(src, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	last, stale = one(scan())
+	used = newestOutside(t, project, candidate)
+	if stale || !last.Equal(used) {
+		t.Errorf("after a source file changed, Last used = %s, Stale = %v, want %s and not Stale", last, stale, used)
+	}
 }
 
 func TestAScanThatCannotReadADirectoryListsItAndExitsOne(t *testing.T) {
@@ -336,6 +438,7 @@ type row struct {
 	cells              []string
 	size, within       float64
 	kind, path, reason string
+	stale              bool
 }
 
 func readTable(t *testing.T, out string) ([]string, []row) {
@@ -355,20 +458,80 @@ func readTable(t *testing.T, out string) ([]string, []row) {
 	units := map[string]float64{"B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40}
 	var rows []row
 	for _, l := range lines[header+1:] {
-		if l == "" {
+		if strings.HasPrefix(l, "Not read") {
 			break
 		}
+		if l == "" || strings.HasPrefix(l, "SIZE") {
+			continue
+		}
 		cells := regexp.MustCompile(`\s{2,}`).Split(strings.TrimSpace(l), -1)
-		number, unit, _ := strings.Cut(cells[0], " ")
+		number, unit, ok := strings.Cut(cells[0], " ")
 		value, err := strconv.ParseFloat(number, 64)
-		if len(cells) != 4 || err != nil || units[unit] == 0 {
-			t.Fatalf("the row %q is not SIZE, KIND, PATH and REASON", l)
+		if !ok || err != nil || units[unit] == 0 {
+			continue
+		}
+		var reason string
+		var stale bool
+		switch {
+		case len(cells) == 6 && cells[4] == "stale":
+			stale, reason = true, cells[5]
+		case len(cells) == 5:
+			reason = cells[4]
+		default:
+			t.Fatalf("the row %q is not SIZE, KIND, PATH, LAST USED, STALE and REASON", l)
 		}
 		within := 0.05 * units[unit]
 		if unit == "B" {
 			within = 0
 		}
-		rows = append(rows, row{cells, value * units[unit], within, cells[1], cells[2], cells[3]})
+		rows = append(rows, row{cells, value * units[unit], within, cells[1], cells[2], reason, stale})
 	}
 	return roots, rows
+}
+
+// newestOutside is the newest modification of the regular files in project
+// outside the Candidate, which is what Last used must equal.
+func newestOutside(t *testing.T, project, candidate string) time.Time {
+	t.Helper()
+	var newest time.Time
+	err := filepath.WalkDir(project, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == project {
+			return err
+		}
+		if p == candidate || strings.HasPrefix(p, candidate+string(filepath.Separator)) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newest.IsZero() {
+		t.Fatalf("%s has no file outside %s", project, candidate)
+	}
+	return newest
+}
+
+func rowFor(t *testing.T, out, path string) string {
+	t.Helper()
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, path) {
+			return l
+		}
+	}
+	t.Fatalf("no row contains %s\n%s", path, out)
+	return ""
 }

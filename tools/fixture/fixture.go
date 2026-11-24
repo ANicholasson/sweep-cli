@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 )
@@ -51,6 +52,20 @@ var committed = []entry{
 	{"projects/web-app/node_modules/fake-beta/LICENSE", hardLink("projects/web-app/node_modules/fake-alpha/LICENSE")},
 	{"projects/web-app/node_modules/fake-alpha/node_modules/fake-epsilon/package.json", manifest("fake-epsilon")},
 	{"projects/web-app/node_modules/fake-alpha/node_modules/fake-epsilon/index.js", module("fake-epsilon")},
+
+	{"projects/stale-app/package.json", manifest("stale-app")},
+	{"projects/stale-app/src/index.js", file("console.log(\"stale\");\n")},
+	{"projects/stale-app/node_modules/fake-old/package.json", manifest("fake-old")},
+	{"projects/stale-app/node_modules/fake-old/index.js", module("fake-old")},
+	{"projects/stale-app/node_modules/fake-old/note.txt", file("old\n")},
+	{"projects/stale-app/node_modules/fake-old/note-again.txt", hardLink("projects/stale-app/node_modules/fake-old/note.txt")},
+
+	{"projects/recent-app/package.json", manifest("recent-app")},
+	{"projects/recent-app/src/index.js", file("console.log(\"recent\");\n")},
+	{"projects/recent-app/node_modules/fake-new/package.json", manifest("fake-new")},
+	{"projects/recent-app/node_modules/fake-new/index.js", module("fake-new")},
+	{"projects/recent-app/node_modules/fake-new/note.txt", file("new\n")},
+	{"projects/recent-app/node_modules/fake-new/note-again.txt", hardLink("projects/recent-app/node_modules/fake-new/note.txt")},
 
 	{"projects/tracked-app/package.json", manifest("tracked-app")},
 	{"projects/tracked-app/node_modules/fake-gamma/package.json", manifest("fake-gamma")},
@@ -105,6 +120,8 @@ var key = answerKey{
 	Root:    "projects",
 	Candidates: []candidate{
 		{Path: "projects/web-app/node_modules", Kind: domain.Dependencies.String()},
+		{Path: "projects/stale-app/node_modules", Kind: domain.Dependencies.String()},
+		{Path: "projects/recent-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/tracked-app/ignored-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/tracked-app/untracked-app/node_modules", Kind: domain.Dependencies.String()},
 	},
@@ -188,7 +205,39 @@ func fill(dir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "answer-key.json"), append(data, '\n'), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "answer-key.json"), append(data, '\n'), 0o644); err != nil {
+		return err
+	}
+	return stampAges(dir)
+}
+
+// stampAges sets the modification times the Stale and recently used Projects
+// are recognised by. The Stale Project's own files are old and their access
+// time is now, and the files inside its Candidate are newer than they are,
+// so neither an access time nor a file inside the Candidate can be what a
+// Scan reports as Last used.
+func stampAges(dir string) error {
+	now := time.Now()
+	hour := now.Add(-time.Hour)
+	if err := stampProject(dir, "projects/stale-app", now.Add(-60*24*time.Hour), hour, now); err != nil {
+		return err
+	}
+	return stampProject(dir, "projects/recent-app", now.Add(-24*time.Hour), hour, now.Add(-24*time.Hour))
+}
+
+func stampProject(dir, project string, own, inside, accessed time.Time) error {
+	root := filepath.Join(dir, filepath.FromSlash(project))
+	candidate := filepath.Join(root, "node_modules")
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		modified, access := own, accessed
+		if p == candidate || strings.HasPrefix(p, candidate+string(filepath.Separator)) {
+			modified, access = inside, inside
+		}
+		return os.Chtimes(p, access, modified)
+	})
 }
 
 func writeEntry(dir string, e entry) error {

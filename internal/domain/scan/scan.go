@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/safety"
@@ -43,8 +44,13 @@ type Unreadable struct {
 // whose Name sorts first, and under the earlier of that Ecosystem's Rules,
 // whatever order the Ecosystems come in.
 //
+// Last used is the newest modification among a Project's own files, outside
+// its Candidates. A Candidate with no Project takes the newest modification
+// inside it. That time is a modification time, never an access time. A
+// Candidate is Stale when it is older than domain.StaleAfter before now.
+//
 // It cannot fail. What it could not read is in the Result.
-func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.Ecosystem) Result {
+func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time) Result {
 	s := scanner{
 		files:  files,
 		git:    git,
@@ -56,13 +62,14 @@ func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.
 	for _, root := range roots {
 		s.enter(string(root))
 	}
-	result := Result{Roots: slices.Clone(roots), Unreadable: s.unreadable}
+	var candidates []domain.Candidate
 	for _, f := range s.found {
 		if !s.inside[f.id] {
-			result.Candidates = append(result.Candidates, f.candidate)
+			candidates = append(candidates, f.candidate)
 		}
 	}
-	return result
+	s.stamp(candidates, now)
+	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable}
 }
 
 type scanner struct {
@@ -102,14 +109,14 @@ func (s *scanner) enter(path string) {
 			continue
 		}
 		if r, ok := s.rules.recognise(e, entries); ok {
-			s.candidate(e, r)
+			s.candidate(e, r, path)
 			continue
 		}
 		s.enter(e.Path)
 	}
 }
 
-func (s *scanner) candidate(dir Entry, r recogniser) {
+func (s *scanner) candidate(dir Entry, r recogniser, project string) {
 	space, err := s.files.Space(dir.Path)
 	if err != nil {
 		s.unread(dir.Path, err)
@@ -127,7 +134,69 @@ func (s *scanner) candidate(dir Entry, r recogniser) {
 		Size:      s.size(dir.Path, space),
 		Ecosystem: r.ecosystem,
 		Rule:      r.rule,
+		Project:   project,
 	}})
+}
+
+// stamp sets Last used and Stale. Candidates of one Project share one time.
+// A Candidate with no Project is measured on its own, from the files inside it.
+func (s *scanner) stamp(candidates []domain.Candidate, now time.Time) {
+	skip := map[string]bool{}
+	for _, c := range candidates {
+		skip[c.Path] = true
+	}
+	shared := map[string]time.Time{}
+	seen := map[string]bool{}
+	staleBefore := now.Add(-domain.StaleAfter)
+	for i := range candidates {
+		c := &candidates[i]
+		var used time.Time
+		if c.Project == "" {
+			used = s.newest(c.Path, nil)
+		} else if seen[c.Project] {
+			used = shared[c.Project]
+		} else {
+			used = s.newest(c.Project, skip)
+			shared[c.Project] = used
+			seen[c.Project] = true
+		}
+		c.LastUsed = used
+		c.Stale = used.Before(staleBefore)
+	}
+}
+
+// newest is the newest modification of the regular files at root and beneath
+// it. A path in skip is a Candidate and is not entered. A Link is not followed.
+func (s *scanner) newest(root string, skip map[string]bool) time.Time {
+	var newest time.Time
+	var walk func(string)
+	walk = func(dir string) {
+		entries, err := s.files.List(dir)
+		if err != nil {
+			s.unread(dir, err)
+			return
+		}
+		for _, e := range entries {
+			if skip[e.Path] {
+				continue
+			}
+			switch e.Is {
+			case Dir:
+				walk(e.Path)
+			case File:
+				mod, err := s.files.Modified(e.Path)
+				if err != nil {
+					s.unread(e.Path, err)
+					continue
+				}
+				if mod.After(newest) {
+					newest = mod
+				}
+			}
+		}
+	}
+	walk(root)
+	return newest
 }
 
 func (s *scanner) size(path string, own Space) domain.Size {
