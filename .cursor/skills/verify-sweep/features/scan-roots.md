@@ -35,6 +35,6 @@ Preconditions:
 ## Gotchas
 
 - A Candidate given alone as a Root is scanned inside: `scan --json projects/web-app/node_modules` lists `fake-alpha/node_modules` beneath it. Only together with a Root that holds the Candidate is the inner one dropped. Don't mistake the lone case for the overlap bug.
-- stderr names a bad Root as typed, so a relative Root stays relative in the message; the `stat` part shows the absolute path.
+- stderr names a bad Root as typed, so a relative Root stays relative in the message, and the error names the absolute path.
 - `-C` resolves against `$RUN/fixture`, so `-C projects` is the Fixture's Root, not the checkout's.
 - The `tracked-app` Trap is inside the Root and is not listed. The `outside` Trap and the Link at `projects/linked-app/through` prove the Root rule. The ignored and untracked `node_modules` under `projects/tracked-app` are Candidates, so a Scan of `projects` lists them.
