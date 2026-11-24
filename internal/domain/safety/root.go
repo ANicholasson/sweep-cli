@@ -12,7 +12,8 @@ import "strings"
 // A drive letter and a UNC host and share compare without letter case.
 // Every other part compares with it, so the check means the same on Linux,
 // where letter case is a different path. ".." that leaves root answers no.
-// ".." does not climb off a volume.
+// ".." does not climb off a volume. A backslash separates only a Windows
+// path. In a POSIX path it is part of a name.
 func Beneath(root, path string, link bool) bool {
 	if link {
 		return false
@@ -33,6 +34,12 @@ func Beneath(root, path string, link bool) bool {
 func parse(p string) (vol string, parts []string, ok bool) {
 	if p == "" || strings.IndexByte(p, 0) >= 0 {
 		return "", nil, false
+	}
+	if !windowsPath(p) {
+		if !strings.HasPrefix(p, "/") {
+			return "", nil, false
+		}
+		return "", clean(strings.Split(p, "/")), true
 	}
 	p = strings.ReplaceAll(p, `\`, `/`)
 	if len(p) >= 4 && strings.EqualFold(p[:4], "//?/") {
@@ -73,6 +80,13 @@ func clean(raw []string) []string {
 		}
 	}
 	return parts
+}
+
+func windowsPath(p string) bool {
+	if len(p) >= 2 && ((p[0] == '\\' && p[1] == '\\') || (p[0] == '/' && p[1] == '/')) {
+		return true
+	}
+	return len(p) >= 3 && letter(p[0]) && p[1] == ':' && (p[2] == '\\' || p[2] == '/')
 }
 
 func letter(c byte) bool {
