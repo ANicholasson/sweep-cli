@@ -44,6 +44,9 @@ func parse(p string) (vol string, parts []string, ok bool) {
 	p = strings.ReplaceAll(p, `\`, `/`)
 	if len(p) >= 4 && strings.EqualFold(p[:4], "//?/") {
 		p = p[4:]
+		if vol, parts, ok := volumeGUID(p); ok {
+			return vol, parts, true
+		}
 		if len(p) >= 4 && strings.EqualFold(p[:4], "unc/") {
 			p = "//" + p[4:]
 		}
@@ -80,6 +83,24 @@ func clean(raw []string) []string {
 		}
 	}
 	return parts
+}
+
+// volumeGUID reads Volume{...} left after the \\?\ prefix is removed.
+// Readlink returns that form for a mounted folder.
+func volumeGUID(p string) (string, []string, bool) {
+	const prefix = "volume{"
+	if len(p) < len(prefix) || !strings.EqualFold(p[:len(prefix)], prefix) {
+		return "", nil, false
+	}
+	end := strings.IndexByte(p, '}')
+	if end < len(prefix) || (end+1 != len(p) && p[end+1] != '/') {
+		return "", nil, false
+	}
+	rest := ""
+	if end+1 < len(p) {
+		rest = p[end+2:]
+	}
+	return "//?/" + strings.ToLower(p[:end+1]), clean(strings.Split(rest, "/")), true
 }
 
 func windowsPath(p string) bool {

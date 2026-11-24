@@ -190,6 +190,40 @@ func TestAScanKeepsAPosixNameThatContainsABackslash(t *testing.T) {
 	}
 }
 
+// mounted is a Root Readlink resolves to a Windows volume path. The fake
+// cannot build a mount point.
+const volumeRoot = `\\?\Volume{11111111-2222-3333-4444-555555555555}\`
+
+type mounted struct{ n uint64 }
+
+func (m *mounted) List(dir string) ([]scan.Entry, error) {
+	switch dir {
+	case volumeRoot:
+		return []scan.Entry{
+			{Name: "package.json", Path: volumeRoot + "package.json", Is: scan.File},
+			{Name: "node_modules", Path: volumeRoot + "node_modules", Is: scan.Dir},
+		}, nil
+	case volumeRoot + "node_modules":
+		return nil, nil
+	default:
+		return nil, errors.New(dir)
+	}
+}
+
+func (m *mounted) Space(string) (scan.Space, error) {
+	m.n++
+	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: m.n}}, nil
+}
+
+func TestAScanOfAVolumeMountListsItsCandidates(t *testing.T) {
+	got := scan.Scan(&mounted{}, sweeptest.Git{}, []domain.Root{volumeRoot}, []domain.Ecosystem{web})
+
+	want := volumeRoot + "node_modules"
+	if len(got.Candidates) != 1 || got.Candidates[0].Path != want || len(got.Unreadable) != 0 {
+		t.Errorf("Candidates = %+v, Unreadable = %v, want %s", got.Candidates, got.Unreadable, want)
+	}
+}
+
 func TestTheGitRuleKeepsAPathOutOfTheCandidates(t *testing.T) {
 	files := sweeptest.NewFiles(sweeptest.Tree{
 		"app/package.json":                       sweeptest.File{Bytes: 1},
