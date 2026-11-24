@@ -314,6 +314,101 @@ func TestScanOfTheFixture(t *testing.T) {
 
 }
 
+func TestASecondSpellingOfACandidateDoesNotChangeLastUsed(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	recent := time.Now().Add(-time.Hour)
+	write := func(rel string, when time.Time) {
+		t.Helper()
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("app/package.json", old)
+	write("app/src/index.js", old)
+	write("app/node_modules/keep.js", old)
+	write("app/sub/package.json", old)
+	write("app/sub/src/index.js", old)
+	write("app/sub/node_modules/new.js", recent)
+	write("outside/new.js", recent)
+	link := func(target, name string) {
+		t.Helper()
+		err := os.Symlink(filepath.Join(top, filepath.FromSlash(target)), filepath.Join(top, filepath.FromSlash(name)))
+		if err != nil && runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+			t.Skipf("this account may not make a symlink: %v", err)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// alias is another spelling of app/sub. jump is a Link, and a Scan does not follow it.
+	link("app/sub", "alias")
+	link("outside", "app/jump")
+
+	app := filepath.Join(top, "app")
+	scan := func(roots ...string) scanJSON {
+		t.Helper()
+		got := b.run(t, top, append([]string{"scan", "--json"}, roots...)...)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("sweep scan --json %v: exit status %d, stderr %q", roots, got.status, got.stderr)
+		}
+		return decode(t, got)
+	}
+	parent := func(out scanJSON) (time.Time, bool) {
+		t.Helper()
+		var used time.Time
+		var stale bool
+		var n int
+		for _, c := range out.Candidates {
+			if sameDir(t, c.Path, filepath.Join(app, "node_modules")) {
+				n++
+				used, stale = c.LastUsed, c.Stale
+			}
+		}
+		if n != 1 {
+			t.Fatalf("app/node_modules is listed %d times in %+v", n, out.Candidates)
+		}
+		return used, stale
+	}
+	usedOf := func(path string) time.Time {
+		t.Helper()
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.ModTime()
+	}
+
+	want := usedOf(filepath.Join(app, "src", "index.js"))
+	onlyUsed, onlyStale := parent(scan(app))
+	if !onlyStale || !onlyUsed.Equal(want) {
+		t.Fatalf("with one Root, Last used = %s, Stale = %v, want %s and Stale", onlyUsed, onlyStale, want)
+	}
+
+	both := scan(filepath.Join(top, "alias"), app)
+	bothUsed, bothStale := parent(both)
+	if !bothStale || !bothUsed.Equal(want) {
+		t.Errorf("with both spellings, Last used = %s, Stale = %v, want %s and Stale", bothUsed, bothStale, want)
+	}
+	nested := 0
+	for _, c := range both.Candidates {
+		if sameDir(t, c.Path, filepath.Join(app, "sub", "node_modules")) {
+			nested++
+		}
+	}
+	if nested != 1 {
+		t.Errorf("the nested Candidate is listed %d times, want once", nested)
+	}
+}
+
 func TestTouchingASourceFileClearsStaleAndACandidateFileDoesNot(t *testing.T) {
 	b := build(t)
 	dir, _ := b.buildFixture(t)
