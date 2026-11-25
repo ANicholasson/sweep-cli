@@ -55,7 +55,7 @@ done
 printf 'x\n' > "$P/linked/src/a.js"
 printf 'x\n' > "$P/plain/src/a.js"
 ln -s ../elsewhere "$P/linked/jump"
-find "$P/locked" "$P/linked" "$P/plain" -exec touch -h -d '90 days ago' {} +
+find "$P/locked" "$P/linked" "$P/plain" -exec touch -h -t 202001010000 {} +
 printf 'new\n' > "$P/elsewhere/fresh.js"
 chmod 0 "$P/locked/secret"
 
@@ -79,7 +79,7 @@ chmod +x "$D/bin/docker"
 
 - **Links beneath a Root.** Run `"$H" run "$RUN" scan-hostile/link-out -- scan --json "$L/root"`. Exit status `0`. `candidates` has one entry, `$L/root/app/node_modules`, and `unreadable` is empty. `ls "$L/root/escape"` prints `node_modules` and `package.json`, so a Scan that followed the Link would have listed a second Candidate.
 - **A Root that is a Link.** Run `"$H" run "$RUN" scan-hostile/link-root -C "$R" -- scan --json alias/rootlink`. Exit status `0`. `roots` is the one path `(cd "$R" && realpath alias/rootlink)` prints, which ends in `deep/target`. `candidates` has one entry, `$R/deep/target/node_modules`, and nothing under `$R/target`.
-- **Unreadable, and a Link in an old Project.** Run `"$H" run "$RUN" scan-hostile/stale -- scan --json "$P/locked" "$P/linked" "$P/plain"`. Exit status `1`. `unreadable` has exactly one entry, `$P/locked/secret`. The Candidate `$P/locked/node_modules` has `"stale": false`, because recent work could be in what was not read. `$P/linked/node_modules` and `$P/plain/node_modules` have `"stale": true`: every file in those Projects was set to 90 days ago, and `$P/elsewhere/fresh.js` is new but only behind the Link `jump`.
+- **Unreadable, and a Link in an old Project.** Run `"$H" run "$RUN" scan-hostile/stale -- scan --json "$P/locked" "$P/linked" "$P/plain"`. Exit status `1`. `unreadable` has exactly one entry, `$P/locked/secret`. The Candidate `$P/locked/node_modules` has `"stale": false`, because recent work could be in what was not read. `$P/linked/node_modules` and `$P/plain/node_modules` have `"stale": true`: every file in those Projects was set to the start of 2020, and `$P/elsewhere/fresh.js` is new but only behind the Link `jump`.
 - **Nested repositories.** Run `"$H" run "$RUN" scan-hostile/nested -- scan --json "$N"`. Exit status `0`. `candidates` has one entry, `$N/empty/node_modules`. `git -C "$N/tracked/node_modules/pkg" --no-optional-locks ls-files` prints `t.txt`, and the same command in `$N/empty/node_modules/pkg` prints nothing.
 - **A docker that never answers.** Run `PATH="$D/bin:$PATH" timeout 20 "$H" run "$RUN" scan-hostile/docker-stall -C "$D/empty" -- scan --json .`. The helper returns in about 5 seconds with exit status `0`, not `124` from `timeout`. The step's `status` is `0` and `dockerData` is `{"mark": "docker did not answer"}` with no `size`.
 - **Fixture unchanged.** Every step's `fixture-changes.txt` is empty.
@@ -87,7 +87,7 @@ chmod +x "$D/bin/docker"
 ## Gotchas
 
 - As root, mode `0` does not refuse a directory, so the unreadable step cannot be reached. Report it as unreachable with that reason.
-- Set the old times with `touch -h`, so the Link `jump` itself is old too. Without `-h`, `touch` follows the Link and ages `elsewhere` instead.
+- Set the old times with `touch -h -t` and a fixed date. `-h` ages the Link `jump` itself, where plain `touch` follows it and ages `elsewhere` instead. `-t` with a fixed date is read the same by GNU and BSD `touch`; a relative date such as `-d '90 days ago'` is GNU only.
 - Build `elsewhere/fresh.js` after the `find ... touch` line, or it is aged with the rest and the step proves nothing.
 - The stand-in `docker` is a script that leaves a child process holding its output. A stand-in that only `exec`s `sleep` passes even when that harder case is broken.
 - Keep the stand-in on the `PATH` for that one step only. Every other step should reach the machine's own `docker`, or none.
