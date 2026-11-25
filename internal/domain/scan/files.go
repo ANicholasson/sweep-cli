@@ -1,6 +1,7 @@
 // Package scan looks for Candidates. A Scan changes nothing. It reads the
-// file tree only through Files, and it asks the Git rule only through
-// safety.Git. Neither port has a method that writes.
+// file tree only through Files, it asks the Git rule only through
+// safety.Git, and it reads Docker data only through Docker. None of the
+// ports has a method that writes.
 package scan
 
 import "time"

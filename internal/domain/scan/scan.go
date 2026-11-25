@@ -24,6 +24,9 @@ type Result struct {
 	// inside a Candidate, and again through the Root that holds the
 	// Candidate, is in it twice.
 	Unreadable []Unreadable
+	// DockerData is the space Docker images and build cache hold, or why
+	// it could not be read. It is never a Candidate.
+	DockerData domain.DockerData
 }
 
 // Unreadable is a path the Scan could not read, and why.
@@ -32,14 +35,21 @@ type Unreadable struct {
 	Err  error
 }
 
+// Docker reports Docker data. It only reads: it has no method that removes
+// or changes anything.
+type Docker interface {
+	Data() domain.DockerData
+}
+
 // Scan looks beneath each Root for the directories that the InProject Rules
 // of the Ecosystems recognise, and measures the Size of each. It leaves
 // Shared cache Rules alone. A directory the Git rule keeps is not a
 // Candidate.
 //
-// It never enters a Candidate, a directory the Git rule keeps, or a Link.
-// Nothing inside a Candidate is listed, and no Candidate is listed twice,
-// whatever order the Roots come in and however they overlap. When two Rules
+// It never enters a Candidate, a directory the Git rule keeps, or a Link,
+// and it never enters or reports a path that is not beneath the Root it is
+// walking. Nothing inside a Candidate is listed, and no Candidate is listed
+// twice, whatever order the Roots come in and however they overlap. When two Rules
 // recognise one directory, it is listed under the Rule of the Ecosystem
 // whose Name sorts first, and under the earlier of that Ecosystem's Rules,
 // whatever order the Ecosystems come in.
@@ -54,8 +64,13 @@ type Unreadable struct {
 // what was not seen. Otherwise it is Stale when its Last used is older
 // than domain.StaleAfter before now.
 //
+// Docker data is asked once, for the whole machine, and set on the Result.
+// It is not a Candidate. Docker missing or not answering is that value's
+// own mark, not an Unreadable path, so a Scan that cannot reach Docker is
+// still complete.
+//
 // It cannot fail. What it could not read is in the Result.
-func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time) Result {
+func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time) Result {
 	s := scanner{
 		files:  files,
 		git:    git,
@@ -65,7 +80,7 @@ func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.
 		inside: map[FileID]bool{},
 	}
 	for _, root := range roots {
-		s.enter(string(root))
+		s.enter(string(root), string(root))
 	}
 	var candidates []domain.Candidate
 	skip := map[FileID]bool{}
@@ -77,7 +92,7 @@ func Scan(files Files, git safety.Git, roots []domain.Root, ecosystems []domain.
 		skip[f.id] = true
 	}
 	s.stamp(candidates, skip, now)
-	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable}
+	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data()}
 }
 
 type scanner struct {
@@ -97,7 +112,10 @@ type found struct {
 	candidate domain.Candidate
 }
 
-func (s *scanner) enter(path string) {
+func (s *scanner) enter(root, path string) {
+	if !safety.Beneath(root, path, false) {
+		return
+	}
 	space, err := s.files.Space(path)
 	if err != nil {
 		s.unread(path, err)
@@ -113,18 +131,18 @@ func (s *scanner) enter(path string) {
 		return
 	}
 	for _, e := range entries {
-		if e.Is != Dir {
+		if !safety.Beneath(root, e.Path, e.Is == Link) || e.Is != Dir {
 			continue
 		}
 		if r, ok := s.rules.recognise(e, entries); ok {
-			s.candidate(e, r, path)
+			s.candidate(root, e, r, path)
 			continue
 		}
-		s.enter(e.Path)
+		s.enter(root, e.Path)
 	}
 }
 
-func (s *scanner) candidate(dir Entry, r recogniser, project string) {
+func (s *scanner) candidate(root string, dir Entry, r recogniser, project string) {
 	space, err := s.files.Space(dir.Path)
 	if err != nil {
 		s.unread(dir.Path, err)
@@ -139,7 +157,7 @@ func (s *scanner) candidate(dir Entry, r recogniser, project string) {
 	}
 	s.found = append(s.found, found{space.File, domain.Candidate{
 		Path:      dir.Path,
-		Size:      s.size(dir.Path, space),
+		Size:      s.size(root, dir.Path, space),
 		Ecosystem: r.ecosystem,
 		Rule:      r.rule,
 		Project:   project,
@@ -172,13 +190,13 @@ func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now
 	}
 }
 
-// newest is the newest modification of the regular files at root and beneath
-// it. A directory whose file identity is in skip is a Candidate and is not
+// newest is the newest modification of the regular files at top and beneath
+// it. It never enters or reads a path that is not beneath top. A directory whose file identity is in skip is a Candidate and is not
 // entered, whichever path reaches it. A Link is not followed. The bool is
 // true when a directory could not be read, or a file's modification time
 // could not be read, so recent work could be in what was not seen.
 // A path discovery already could not read is not reported again.
-func (s *scanner) newest(root string, skip map[FileID]bool) (time.Time, bool) {
+func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 	var newest time.Time
 	var blocked bool
 	var walk func(string)
@@ -190,6 +208,9 @@ func (s *scanner) newest(root string, skip map[FileID]bool) (time.Time, bool) {
 			return
 		}
 		for _, e := range entries {
+			if !safety.Beneath(top, e.Path, e.Is == Link) {
+				continue
+			}
 			switch e.Is {
 			case Dir:
 				space, err := s.files.Space(e.Path)
@@ -215,7 +236,7 @@ func (s *scanner) newest(root string, skip map[FileID]bool) (time.Time, bool) {
 			}
 		}
 	}
-	walk(root)
+	walk(top)
 	return newest, blocked
 }
 
@@ -232,7 +253,7 @@ func (s *scanner) noteUnread(path string, err error) {
 	s.unread(path, err)
 }
 
-func (s *scanner) size(path string, own Space) domain.Size {
+func (s *scanner) size(root, path string, own Space) domain.Size {
 	counted := map[FileID]bool{own.File: true}
 	total := own.Bytes
 	var add func(dir string)
@@ -243,6 +264,9 @@ func (s *scanner) size(path string, own Space) domain.Size {
 			return
 		}
 		for _, e := range entries {
+			if !safety.Beneath(root, e.Path, false) {
+				continue
+			}
 			space, err := s.files.Space(e.Path)
 			if err != nil {
 				s.unread(e.Path, err)

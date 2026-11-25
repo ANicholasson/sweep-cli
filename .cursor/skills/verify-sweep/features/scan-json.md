@@ -36,3 +36,4 @@ Preconditions:
 - Measure with `"$H" du`, not a bare `du -sk` or `du -sb`: the helper asks for 512-byte blocks the way the end-to-end test does, and `-b` gives apparent size, which is not a Size.
 - Measure after the Scan, never before launch: the file system may still be placing new blocks right after the Fixture is built. If `du` and `size` disagree, measure again; two equal `du` readings settle it.
 - Paths in the JSON are absolute and include the run directory; replace it with `$RUN` before pasting into a pull request.
+- `dockerData` is Docker data, not a Candidate. Drive it through [Docker data](./scan-docker.md).

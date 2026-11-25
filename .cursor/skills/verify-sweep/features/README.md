@@ -38,6 +38,7 @@ Keep implementation details out of the map. Name only user paths, commands, requ
 ## Features
 
 - [Scan as a table](./scan-table.md) covers the Roots header, Candidates grouped by Project, one row per Candidate with Size, Kind, path, Last used, the Stale mark and Reason, and `No Candidates.`.
+- [Docker data](./scan-docker.md) covers the one reported-only line, the `dockerData` field, and a Scan that still exits zero when Docker is missing or not running.
 - [Scan as JSON](./scan-json.md) covers the version 1 document, exact Sizes against `du`, the Answer key's Candidates, each Candidate's Project, Last used and Stale mark, and empty lists.
 - [Choosing Roots](./scan-roots.md) covers the default Root, several and overlapping Roots, flags after Roots, `--`, the Root rule Trap, and bad Roots that stop the Scan.
 - [A Scan that cannot read everything](./scan-unreadable.md) covers exit status 1 and the unreadable list in both formats.

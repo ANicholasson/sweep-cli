@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -38,6 +39,28 @@ func (f file) create(_, target string) error {
 
 func (l hardLink) create(dir, target string) error {
 	return os.Link(filepath.Join(dir, filepath.FromSlash(string(l))), target)
+}
+
+// link is the slash path, from the Fixture root, that this entry points at.
+type link string
+
+func (l link) create(dir, target string) error {
+	to := filepath.Join(dir, filepath.FromSlash(string(l)))
+	rel, err := filepath.Rel(filepath.Dir(target), to)
+	if err != nil {
+		return err
+	}
+	err = os.Symlink(rel, target)
+	if err == nil || runtime.GOOS != "windows" {
+		return err
+	}
+	// A Windows account cannot always make a symlink. A junction is a Link
+	// and needs no privilege.
+	out, jerr := exec.Command("cmd", "/c", "mklink", "/J", target, to).CombinedOutput()
+	if jerr != nil {
+		return fmt.Errorf("mklink /J: %w: %s", jerr, out)
+	}
+	return nil
 }
 
 // committed is written before the repository commits, and git tracks it.
@@ -77,6 +100,12 @@ var committed = []entry{
 	{"outside/stray-app/package.json", manifest("stray-app")},
 	{"outside/stray-app/node_modules/fake-delta/package.json", manifest("fake-delta")},
 	{"outside/stray-app/node_modules/fake-delta/index.js", module("fake-delta")},
+
+	{"outside/stash-app/package.json", manifest("stash-app")},
+	{"outside/stash-app/node_modules/fake-theta/package.json", manifest("fake-theta")},
+	{"outside/stash-app/node_modules/fake-theta/index.js", module("fake-theta")},
+	{"projects/linked-app/package.json", manifest("linked-app")},
+	{"projects/linked-app/through", link("outside/stash-app")},
 }
 
 // ignored is written before the commit. The repository's gitignore names it,
@@ -128,6 +157,7 @@ var key = answerKey{
 	Traps: []trap{
 		{Path: "projects/tracked-app/node_modules", Reason: "Git tracks its files, so the Git rule keeps it."},
 		{Path: "outside/stray-app/node_modules", Reason: "It is outside every Root, so the Root rule keeps it."},
+		{Path: "projects/linked-app/through/node_modules", Reason: "It is reached through a Link, so the Root rule keeps it."},
 	},
 }
 

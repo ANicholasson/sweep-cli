@@ -13,7 +13,8 @@ Status: early development.
 A Scan looks beneath each Root, or beneath the current directory when you
 give none, and lists every Candidate a Rule recognises, such as a
 `node_modules` beside a `package.json`, with its Size, Kind, path and
-Reason. It groups Candidates by Project. Last used is the newest
+Reason. A Root that is a Link is resolved once, and a Link beneath a Root
+is not followed. It groups Candidates by Project. Last used is the newest
 modification among that Project's own files, outside its Candidates, and
 never an access time. A Candidate last used more than 30 days ago is
 marked Stale. A Candidate with no Project takes the newest modification
@@ -25,6 +26,14 @@ same as one JSON document with a `version` field, and each Candidate
 carries its Project's path, `last_used` and `stale`. A Size is in bytes in
 the JSON, and it is what `du -s` reports for the path, with each
 hard-linked file counted once.
+
+A Scan also prints one line of Docker data: the space Docker images and
+build cache hold, marked `reported only`. It is not a Candidate, it is
+never a row of the table, and no flag makes it part of a Pick. `--json`
+carries it in `dockerData` (`size` in bytes, and `mark`) and never in
+`candidates`. When Docker is missing or not running, the line says so and
+the Scan still exits zero. The size is the Images total plus the Build
+Cache total from `docker system df`.
 
 The exit status is 0 when the Scan read everything, 1 when something
 beneath a Root could not be read or the output could not be written, and 2
@@ -39,6 +48,8 @@ sweep deletes files, so these rules are non-negotiable:
 2. Never follow a link (a symlink, or a junction on Windows) out of a
    root, and never touch a path outside the roots.
 3. If anything changed between the plan and the delete, skip that path.
+
+A Scan does not close one case. A directory above the one being listed can be swapped for a Link and then followed. A Clean must.
 
 Deleted items go to the OS trash by default. Permanent delete is opt-in.
 

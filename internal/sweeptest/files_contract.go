@@ -50,6 +50,22 @@ func FilesContract(t *testing.T, open func(t *testing.T, tree Tree) (files scan.
 		}
 	})
 
+	t.Run("List fails on a Link and lists nothing behind it", func(t *testing.T) {
+		files, top := open(t, Tree{
+			"dir/secret.txt": File{Bytes: 1},
+			"to-dir":         Link{To: "dir"},
+		})
+		entries, err := files.List(find(t, files, top, "to-dir").Path)
+		if err == nil {
+			t.Fatalf("List of a Link = %v, want an error", names(entries))
+		}
+		for _, e := range entries {
+			if e.Name == "secret.txt" {
+				t.Errorf("List of a Link named %s", e.Name)
+			}
+		}
+	})
+
 	t.Run("List fails on a file and on a path that is not there", func(t *testing.T) {
 		files, top := open(t, Tree{"f.txt": File{Bytes: 1}})
 		if _, err := files.List(find(t, files, top, "f.txt").Path); err == nil {

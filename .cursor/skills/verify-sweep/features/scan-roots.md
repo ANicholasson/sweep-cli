@@ -27,7 +27,7 @@ Preconditions:
 - **Overlap, Candidate as Root.** Run `"$H" run "$RUN" scan-roots/candidate-first -- scan --json projects/web-app/node_modules projects`. Exit status `0`. `web-app/node_modules` is listed once and nothing beneath it is listed: no `fake-alpha/node_modules`.
 - **Flag after Roots.** Run `"$H" run "$RUN" scan-roots/flag-after -- scan projects --json`. Exit status `0` and stdout is JSON with `roots` `["$RUN/fixture/projects"]`.
 - **Dashes.** Run `"$H" run "$RUN" scan-roots/dashes -- scan --json -- projects`. Exit status `0`, JSON as above. Then run `"$H" run "$RUN" scan-roots/dashes-flag -- scan -- --json`. Exit status `2`, stdout empty, stderr `sweep: --json cannot be a Root: ...`.
-- **Root rule Trap.** In the evidence of `scan-roots/default`, no `path` starts with `$RUN/fixture/outside`, although `outside/stray-app/node_modules` sits beside a `package.json` (check with `ls "$RUN/fixture/outside/stray-app"`).
+- **Root rule Trap.** In the evidence of `scan-roots/default`, no `path` starts with `$RUN/fixture/outside`, although `outside/stray-app/node_modules` sits beside a `package.json` (check with `ls "$RUN/fixture/outside/stray-app"`). No `path` contains `linked-app/through`. That Link leads to `outside/stash-app`, and `outside/stash-app/node_modules` is not listed either.
 - **Missing Root.** Run `"$H" run "$RUN" scan-roots/missing -- scan --json projects gone`. Exit status `2`, stdout empty, stderr names `gone` and says `no such file or directory`; the good Root is not scanned either.
 - **File as Root.** Run `"$H" run "$RUN" scan-roots/file -- scan --json projects answer-key.json`. Exit status `2`, stdout empty, stderr `sweep: answer-key.json cannot be a Root: it is not a directory`.
 - **Unchanged.** Every step's `fixture-changes.txt` is empty.
@@ -35,6 +35,6 @@ Preconditions:
 ## Gotchas
 
 - A Candidate given alone as a Root is scanned inside: `scan --json projects/web-app/node_modules` lists `fake-alpha/node_modules` beneath it. Only together with a Root that holds the Candidate is the inner one dropped. Don't mistake the lone case for the overlap bug.
-- stderr names a bad Root as typed, so a relative Root stays relative in the message; the `stat` part shows the absolute path.
+- stderr names a bad Root as typed, so a relative Root stays relative in the message, and the error names the absolute path.
 - `-C` resolves against `$RUN/fixture`, so `-C projects` is the Fixture's Root, not the checkout's.
-- The `tracked-app` Trap is inside the Root and is not listed. The `outside` Trap is the one that proves the Root rule. The ignored and untracked `node_modules` under `projects/tracked-app` are Candidates, so a Scan of `projects` lists them.
+- The `tracked-app` Trap is inside the Root and is not listed. The `outside` Trap and the Link at `projects/linked-app/through` prove the Root rule. The ignored and untracked `node_modules` under `projects/tracked-app` are Candidates, so a Scan of `projects` lists them.
