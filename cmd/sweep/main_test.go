@@ -62,7 +62,7 @@ func TestNoArgumentsIsAUsageError(t *testing.T) {
 	if status != 2 {
 		t.Errorf("exit status = %d, want 2", status)
 	}
-	if !strings.Contains(stderr.String(), "-version") {
+	if !strings.Contains(stderr.String(), "-version") || !strings.Contains(stderr.String(), "clean --dry-run") {
 		t.Errorf("stderr = %q, want the usage", stderr.String())
 	}
 }

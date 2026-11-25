@@ -12,7 +12,7 @@
 ## How to get to it (user POV)
 
 - Run `sweep --version`.
-- Run `sweep`, `sweep clean`, or `sweep scan --jsno`.
+- Run `sweep`, `sweep recycle`, or `sweep scan --jsno`.
 
 ## Driving it with sweep-verify
 
@@ -23,12 +23,12 @@ Preconditions:
 
 - **Version.** Run `"$H" run "$RUN" version/version -- --version`. Exit status `0`, stderr empty, stdout one line `sweep v0.0.0-<commit time, UTC, as yyyymmddhhmmss>-<first 12 hex digits of the commit>`, with `+dirty` appended when `build.txt` lists uncommitted changes. The 12 hex digits match the `checkout:` line of `build.txt`.
 - **No command.** Run `"$H" run "$RUN" version/none --`. Exit status `2`, stdout empty, stderr starts `usage: sweep scan [--json] [Root...]` and lists `sweep --version`.
-- **Unknown command.** Run `"$H" run "$RUN" version/clean -- clean`. Exit status `2`, stdout empty, stderr is the same usage.
+- **Unknown command.** Run `"$H" run "$RUN" version/unknown -- recycle`. Exit status `2`, stdout empty, stderr is the same usage.
 - **Unknown flag.** Run `"$H" run "$RUN" version/bad-flag -- scan --jsno`. Exit status `2`, stdout empty, stderr starts `flag provided but not defined: -jsno` and shows `Usage of sweep scan:`.
 - **Unchanged.** Every step's `fixture-changes.txt` is empty.
 
 ## Gotchas
 
-- `sweep clean` is a usage error today because Clean is not built. When it lands, move that step to the Clean feature and pick another unknown command here.
+- `sweep clean` is a command. The unknown command in this file is `recycle`.
 - A binary built with `go run` or outside a git checkout prints `sweep (devel)`; always use the binary `launch` built.
 - `--version` is a flag of `sweep` itself, so `sweep scan --version` is an unknown flag of `scan`, not the version.

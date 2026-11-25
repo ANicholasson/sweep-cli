@@ -1,4 +1,4 @@
-// Package report prints what a Scan found.
+// Package report prints what a Scan found and what a dry run decided.
 package report
 
 import (
@@ -89,11 +89,16 @@ func table(out *bytes.Buffer, result scan.Result) {
 		}
 	}
 	writeDocker(out, result.DockerData)
-	if len(result.Unreadable) > 0 {
-		out.WriteString("\nNot read, so the list may be short and a Size may be low\n")
-		for _, u := range result.Unreadable {
-			fmt.Fprintf(out, "  %s: %v\n", u.Path, u.Err)
-		}
+	writeUnreadable(out, result.Unreadable)
+}
+
+func writeUnreadable(out *bytes.Buffer, unread []scan.Unreadable) {
+	if len(unread) == 0 {
+		return
+	}
+	out.WriteString("\nNot read, so the list may be short and a Size may be low\n")
+	for _, u := range unread {
+		fmt.Fprintf(out, "  %s: %v\n", u.Path, u.Err)
 	}
 }
 
