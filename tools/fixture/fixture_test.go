@@ -85,8 +85,6 @@ func matchesAnswerKey(t *testing.T, dir string) {
 			t.Errorf("Candidate %s is something no Rule recognises", c.Path)
 		case kind != c.Kind:
 			t.Errorf("Candidate %s has Kind %q, but the Rule that recognises it names %q", c.Path, c.Kind, kind)
-		case c.Kind != domain.Dependencies.String():
-			t.Errorf("Candidate %s has Kind %q, want %q", c.Path, c.Kind, domain.Dependencies)
 		}
 	}
 

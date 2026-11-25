@@ -15,6 +15,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ANicholasson/sweep-cli/internal/domain"
+	"github.com/ANicholasson/sweep-cli/internal/domain/ecosystems"
 )
 
 type scanJSON struct {
@@ -249,10 +252,8 @@ func TestScanOfTheFixture(t *testing.T) {
 		}
 		for _, c := range out.Candidates {
 			project := filepath.Dir(c.Path)
-			manifest := filepath.Join(project, "package.json")
-			info, err := os.Lstat(manifest)
-			if err != nil || !info.Mode().IsRegular() {
-				t.Errorf("%s: Project %s has no manifest", c.Path, c.Project)
+			if !manifestBeside(project, c.Path) {
+				t.Errorf("%s: Project %s holds no Manifest for that Candidate", c.Path, c.Project)
 			}
 			if !sameDir(t, c.Project, project) {
 				t.Errorf("%s: Project = %s, want %s", c.Path, c.Project, project)
@@ -748,6 +749,25 @@ func readTable(t *testing.T, out string) ([]string, []row) {
 
 // newestOutside is the newest modification of the regular files in project
 // outside the Candidate, which is what Last used must equal.
+// manifestBeside reports whether project holds the Manifest of a Rule that
+// names the Candidate's directory.
+func manifestBeside(project, candidate string) bool {
+	name := filepath.Base(candidate)
+	for _, e := range ecosystems.All() {
+		for _, r := range e.Rules {
+			w, ok := r.Where.(domain.InProject)
+			if !ok || w.Candidate != name {
+				continue
+			}
+			info, err := os.Lstat(filepath.Join(project, w.Manifest))
+			if err == nil && info.Mode().IsRegular() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func newestOutside(t *testing.T, project, candidate string) time.Time {
 	t.Helper()
 	var newest time.Time
