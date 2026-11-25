@@ -106,6 +106,13 @@ var committed = []entry{
 	{"outside/stash-app/node_modules/fake-theta/index.js", module("fake-theta")},
 	{"projects/linked-app/package.json", manifest("linked-app")},
 	{"projects/linked-app/through", link("outside/stash-app")},
+
+	{"projects/rust-app/Cargo.toml", file("[package]\nname = \"rust-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")},
+	{"projects/rust-app/src/main.rs", file("fn main() {}\n")},
+	{"projects/rust-app/target/debug/deps/lib.rlib", file("synthetic build output\n")},
+	{"projects/rust-app/target/debug/deps/lib-again.rlib", hardLink("projects/rust-app/target/debug/deps/lib.rlib")},
+
+	{"projects/plain/target/note.txt", file("not a crate\n")},
 }
 
 // ignored is written before the commit. The repository's gitignore names it,
@@ -153,11 +160,13 @@ var key = answerKey{
 		{Path: "projects/recent-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/tracked-app/ignored-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/tracked-app/untracked-app/node_modules", Kind: domain.Dependencies.String()},
+		{Path: "projects/rust-app/target", Kind: domain.BuildOutput.String()},
 	},
 	Traps: []trap{
 		{Path: "projects/tracked-app/node_modules", Reason: "Git tracks its files, so the Git rule keeps it."},
 		{Path: "outside/stray-app/node_modules", Reason: "It is outside every Root, so the Root rule keeps it."},
 		{Path: "projects/linked-app/through/node_modules", Reason: "It is reached through a Link, so the Root rule keeps it."},
+		{Path: "projects/plain/target", Reason: "No Cargo.toml sits beside it, so it is not a Candidate."},
 	},
 }
 
