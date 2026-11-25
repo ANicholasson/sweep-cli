@@ -42,6 +42,7 @@ Keep implementation details out of the map. Name only user paths, commands, requ
 - [Scan as JSON](./scan-json.md) covers the version 1 document, exact Sizes against `du`, the Answer key's Candidates, each Candidate's Project, Last used and Stale mark, and empty lists.
 - [Choosing Roots](./scan-roots.md) covers the default Root, several and overlapping Roots, flags after Roots, `--`, the Root rule Trap, and bad Roots that stop the Scan.
 - [A Scan that cannot read everything](./scan-unreadable.md) covers exit status 1 and the unreadable list in both formats.
+- [A Scan of a tree built to mislead it](./scan-hostile.md) covers Links beneath a Root, a Root that is a Link, an unreadable directory inside a Project, a repository nested in a Candidate, and a `docker` that never answers.
 - [Version and usage](./version-and-usage.md) covers `--version`, the usage message, and unknown commands and flags.
 
 Not built yet: Clean, Plan, Pick, Trash and Delete. When one lands, add its file here. A Clean is driven only against `$RUN/fixture`, and its proof is the listing showing the Answer key's Candidates gone and every Trap present.
