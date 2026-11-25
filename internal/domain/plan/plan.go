@@ -46,7 +46,6 @@ type Plan struct {
 	Picked []Picked
 }
 
-// Choice is how one Candidate was reported: picked or not, and the reason.
 type Choice struct {
 	Candidate domain.Candidate
 	Picked    bool
@@ -58,10 +57,6 @@ type Choice struct {
 // Candidate are one pick. A path in named that is not a Candidate is an
 // UnknownPath. A Stale Candidate is "Stale". One that was only named is
 // "named with --pick". One that was left out is "used recently".
-//
-// The Fingerprint of a picked Candidate is read while the Plan is built. An
-// error from that read is returned and the Plan is not usable: a Clean must
-// not act on a Candidate whose Fingerprint could not be recorded.
 func Build(files scan.Files, result scan.Result, named []string) (Plan, []Choice, error) {
 	type namedFile struct {
 		path string
@@ -123,10 +118,6 @@ func Build(files scan.Files, result scan.Result, named []string) (Plan, []Choice
 	return Plan{Roots: append([]domain.Root(nil), result.Roots...), Picked: picked}, choices, nil
 }
 
-// measure reads the identity, entry count and newest modification of the
-// Candidate at path. It counts the Candidate's own identity and time, and
-// every directory entry inside it. It never follows a Link, and a path that
-// is not beneath the Candidate is left out.
 func measure(files scan.Files, path string) (scan.FileID, int64, time.Time, error) {
 	space, err := files.Space(path)
 	if err != nil {
@@ -169,10 +160,7 @@ func measure(files scan.Files, path string) (scan.FileID, int64, time.Time, erro
 	return space.File, entries, newest, nil
 }
 
-// planV1 is the JSON of a Plan. A change that could break a Clean raises
-// its version. Every list is [] when it is empty, never null. size is the
-// Candidate's Size in bytes. newest is UTC. identity is the file identity
-// of the Candidate path itself.
+// Every list is [] when it is empty, never null.
 type planV1 struct {
 	Version    int        `json:"version"`
 	Roots      []string   `json:"roots"`
