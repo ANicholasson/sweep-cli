@@ -253,7 +253,6 @@ func answers(t *testing.T, dir string) answerKey {
 	return key
 }
 
-// candidateName reports whether a Rule's Candidate is name.
 func candidateName(name string) bool {
 	for _, e := range ecosystems.All() {
 		for _, r := range e.Rules {

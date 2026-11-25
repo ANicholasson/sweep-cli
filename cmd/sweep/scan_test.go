@@ -747,10 +747,6 @@ func readTable(t *testing.T, out string) ([]string, []row) {
 	return roots, rows
 }
 
-// newestOutside is the newest modification of the regular files in project
-// outside the Candidate, which is what Last used must equal.
-// manifestBeside reports whether project holds the Manifest of a Rule that
-// names the Candidate's directory.
 func manifestBeside(project, candidate string) bool {
 	name := filepath.Base(candidate)
 	for _, e := range ecosystems.All() {
@@ -768,6 +764,8 @@ func manifestBeside(project, candidate string) bool {
 	return false
 }
 
+// newestOutside is the newest modification of the regular files in project
+// outside the Candidate, which is what Last used must equal.
 func newestOutside(t *testing.T, project, candidate string) time.Time {
 	t.Helper()
 	var newest time.Time
