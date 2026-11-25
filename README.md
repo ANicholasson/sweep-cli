@@ -21,6 +21,14 @@ same as one JSON document with a `version` field. A Size is in bytes in
 the JSON, and it is what `du -s` reports for the path, with each
 hard-linked file counted once.
 
+A Scan also prints one line of Docker data: the space Docker images and
+build cache hold, marked `reported only`. It is not a Candidate, it is
+never a row of the table, and no flag makes it part of a Pick. `--json`
+carries it in `dockerData` (`size` in bytes, and `mark`) and never in
+`candidates`. When Docker is missing or not running, the line says so and
+the Scan still exits zero. The size is the Images total plus the Build
+Cache total from `docker system df`.
+
 The exit status is 0 when the Scan read everything, 1 when something
 beneath a Root could not be read or the output could not be written, and 2
 when the command line is wrong or a Root is not a directory, in which case
