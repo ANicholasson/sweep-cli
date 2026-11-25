@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"path"
 	"slices"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 )
@@ -25,9 +26,10 @@ type Files struct {
 }
 
 type fakeNode struct {
-	is     scan.Is
-	space  scan.Space
-	inside []string
+	is       scan.Is
+	space    scan.Space
+	modified time.Time
+	inside   []string
 }
 
 var _ scan.Files = (*Files)(nil)
@@ -61,7 +63,9 @@ func NewFiles(tree Tree) *Files {
 		at := path.Join(Top, p)
 		switch n := tree[p].(type) {
 		case File:
-			place(at, node(scan.File, int64(n.Bytes)))
+			made := node(scan.File, int64(n.Bytes))
+			made.modified = n.Modified
+			place(at, made)
 		case HardLink:
 			place(at, f.nodes[path.Join(Top, n.To)])
 		case Link:
@@ -98,6 +102,14 @@ func (f *Files) Space(p string) (scan.Space, error) {
 		return scan.Space{}, err
 	}
 	return n.space, nil
+}
+
+func (f *Files) Modified(p string) (time.Time, error) {
+	n, err := f.at("modified", p)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return n.modified, nil
 }
 
 func (f *Files) at(op, p string) (*fakeNode, error) {

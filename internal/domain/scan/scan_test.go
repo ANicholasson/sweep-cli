@@ -2,13 +2,18 @@ package scan_test
 
 import (
 	"errors"
+	"path"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 	"github.com/ANicholasson/sweep-cli/internal/sweeptest"
 )
+
+// scanNow is the clock the tests hand a Scan, so Stale does not follow the machine.
+var scanNow = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
 var (
 	gradle = domain.Ecosystem{Name: "Gradle", Rules: []domain.Rule{
@@ -27,7 +32,7 @@ func TestAPathTwoRulesRecogniseIsListedOnceUnderTheSameRule(t *testing.T) {
 		"app/build/out.bin": sweeptest.File{Bytes: 1},
 	})
 	for _, ecosystems := range [][]domain.Ecosystem{{gradle, web}, {web, gradle}} {
-		got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, ecosystems)
+		got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, ecosystems, scanNow)
 
 		if len(got.Candidates) != 1 {
 			t.Fatalf("%d Candidates, want app/build once", len(got.Candidates))
@@ -45,7 +50,7 @@ func TestSizeCountsEachDirectoryAndEachHardLinkedFileOnce(t *testing.T) {
 		"app/node_modules/b/LICENSE": sweeptest.HardLink{To: "app/node_modules/a/LICENSE"},
 	})
 
-	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow)
 
 	want := domain.Size(3*sweeptest.DirSpace + 64<<10) // node_modules, a and b, and the LICENSE once
 	if len(got.Candidates) != 1 || got.Candidates[0].Size != want {
@@ -66,7 +71,7 @@ func TestWhatCannotBeReadIsReportedOnceAndTheRestIsStillFound(t *testing.T) {
 	files.Unreadable("locked", denied)
 	files.Unreadable("open/app/node_modules/sealed", denied)
 
-	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top, "/gone"}, []domain.Ecosystem{web})
+	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top, "/gone"}, []domain.Ecosystem{web}, scanNow)
 
 	want := domain.Size(2*sweeptest.DirSpace + 512) // node_modules and a, and x.js
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/open/app/node_modules" || got.Candidates[0].Size != want {
@@ -98,7 +103,7 @@ func TestAScanNeverEntersALinkAndNeverListsOne(t *testing.T) {
 		"elsewhere/node_modules/b/package.json": sweeptest.File{Bytes: 1},
 	})
 
-	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/real"}, []domain.Ecosystem{web})
+	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/real"}, []domain.Ecosystem{web}, scanNow)
 
 	want := domain.Size(3*sweeptest.DirSpace + 512) // node_modules, a and .bin, and x.js, while the Link a-tool takes none
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/real/app/node_modules" || got.Candidates[0].Size != want {
@@ -108,7 +113,7 @@ func TestAScanNeverEntersALinkAndNeverListsOne(t *testing.T) {
 		t.Errorf("Unreadable = %v, want nothing", got.Unreadable)
 	}
 
-	got = scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got = scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow)
 
 	var paths []string
 	for _, c := range got.Candidates {
@@ -148,8 +153,10 @@ func (o *offered) Space(string) (scan.Space, error) {
 	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: o.n}}, nil
 }
 
+func (*offered) Modified(string) (time.Time, error) { return time.Time{}, nil }
+
 func TestAScanDropsAPathOutsideTheRootAndALink(t *testing.T) {
-	got := scan.Scan(&offered{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got := scan.Scan(&offered{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow)
 
 	if len(got.Candidates) != 0 || len(got.Unreadable) != 0 {
 		t.Errorf("Candidates = %+v, Unreadable = %v, want neither", got.Candidates, got.Unreadable)
@@ -181,8 +188,10 @@ func (o *namedWithABackslash) Space(string) (scan.Space, error) {
 	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: o.n}}, nil
 }
 
+func (*namedWithABackslash) Modified(string) (time.Time, error) { return time.Time{}, nil }
+
 func TestAScanKeepsAPosixNameThatContainsABackslash(t *testing.T) {
-	got := scan.Scan(&namedWithABackslash{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got := scan.Scan(&namedWithABackslash{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow)
 
 	want := sweeptest.Top + `/\../node_modules`
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != want {
@@ -215,8 +224,10 @@ func (m *mounted) Space(string) (scan.Space, error) {
 	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: m.n}}, nil
 }
 
+func (*mounted) Modified(string) (time.Time, error) { return time.Time{}, nil }
+
 func TestAScanOfAVolumeMountListsItsCandidates(t *testing.T) {
-	got := scan.Scan(&mounted{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{volumeRoot}, []domain.Ecosystem{web})
+	got := scan.Scan(&mounted{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{volumeRoot}, []domain.Ecosystem{web}, scanNow)
 
 	want := volumeRoot + "node_modules"
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != want || len(got.Unreadable) != 0 {
@@ -250,7 +261,7 @@ func TestTheGitRuleKeepsAPathOutOfTheCandidates(t *testing.T) {
 		Tracked: []string{"app/package.json", "app/node_modules/keep.js"},
 	})
 
-	got := scan.Scan(files, git, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got := scan.Scan(files, git, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow)
 
 	// app/node_modules holds a tracked file, so the Git rule keeps it and
 	// the Scan does not enter it. The node_modules inside it is absent.
@@ -274,10 +285,62 @@ func TestAPathGitCannotAnswerIsNotACandidate(t *testing.T) {
 	})
 	git := sweeptest.NewGit(sweeptest.Top, sweeptest.Work{Broken: true})
 
-	got := scan.Scan(files, git, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got := scan.Scan(files, git, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow)
 
 	if len(got.Candidates) != 0 || len(got.Unreadable) != 0 {
 		t.Errorf("Candidates = %+v, Unreadable = %v, want no Candidate and nothing unreadable", got.Candidates, got.Unreadable)
+	}
+}
+
+func TestLastUsedIgnoresCandidatesAndStaleIsOlderThanThirtyDays(t *testing.T) {
+	old := scanNow.Add(-31 * 24 * time.Hour)
+	fresh := scanNow.Add(-29 * 24 * time.Hour)
+	edge := scanNow.Add(-domain.StaleAfter)
+	justOlder := edge.Add(-time.Second)
+	inside := scanNow.Add(-time.Hour)
+	files := sweeptest.NewFiles(sweeptest.Tree{
+		"stale/package.json":      sweeptest.File{Bytes: 1, Modified: old},
+		"stale/src/app.js":        sweeptest.File{Bytes: 1, Modified: old},
+		"stale/node_modules/a.js": sweeptest.File{Bytes: 1, Modified: inside},
+		"stale/link":              sweeptest.Link{To: "outside"},
+		"outside/new.js":          sweeptest.File{Bytes: 1, Modified: inside},
+		"fresh/package.json":      sweeptest.File{Bytes: 1, Modified: old},
+		"fresh/src/app.js":        sweeptest.File{Bytes: 1, Modified: fresh},
+		"fresh/node_modules/a.js": sweeptest.File{Bytes: 1, Modified: inside},
+		"fresh/build/out.js":      sweeptest.File{Bytes: 1, Modified: old},
+		"edge/package.json":       sweeptest.File{Bytes: 1, Modified: edge},
+		"edge/node_modules/a.js":  sweeptest.File{Bytes: 1, Modified: old},
+		"older/package.json":      sweeptest.File{Bytes: 1, Modified: justOlder},
+		"older/node_modules/a.js": sweeptest.File{Bytes: 1, Modified: inside},
+	})
+
+	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow)
+
+	want := map[string]struct {
+		used  time.Time
+		stale bool
+	}{
+		sweeptest.Top + "/stale/node_modules": {old, true},
+		sweeptest.Top + "/fresh/node_modules": {fresh, false},
+		sweeptest.Top + "/fresh/build":        {fresh, false},
+		sweeptest.Top + "/edge/node_modules":  {edge, false},
+		sweeptest.Top + "/older/node_modules": {justOlder, true},
+	}
+	if len(got.Candidates) != len(want) {
+		t.Fatalf("Candidates = %+v, want %d", got.Candidates, len(want))
+	}
+	for _, c := range got.Candidates {
+		w, ok := want[c.Path]
+		if !ok {
+			t.Errorf("%s is listed, and it should not be", c.Path)
+			continue
+		}
+		if c.Project != path.Dir(c.Path) || !c.LastUsed.Equal(w.used) || c.Stale != w.stale {
+			t.Errorf("%s: Project %s, Last used %s, Stale %v, want %s, %s, %v", c.Path, c.Project, c.LastUsed, c.Stale, path.Dir(c.Path), w.used, w.stale)
+		}
+	}
+	if len(got.Unreadable) != 0 {
+		t.Errorf("Unreadable = %v, want nothing", got.Unreadable)
 	}
 }
 
@@ -289,7 +352,7 @@ func TestDockerDataIsReportedAndNeverBecomesACandidate(t *testing.T) {
 	roots := []domain.Root{sweeptest.Top}
 	ecosystems := []domain.Ecosystem{web}
 
-	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{Answer: domain.Reported(42)}, roots, ecosystems)
+	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{Answer: domain.Reported(42)}, roots, ecosystems, scanNow)
 
 	size, ok := got.DockerData.Size()
 	if !ok || size != 42 || got.DockerData.Mark() != "reported only" {
@@ -299,7 +362,7 @@ func TestDockerDataIsReportedAndNeverBecomesACandidate(t *testing.T) {
 		t.Errorf("Candidates = %+v, want the node_modules only", got.Candidates)
 	}
 
-	got = scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{Answer: domain.Unread("docker is not running")}, roots, ecosystems)
+	got = scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{Answer: domain.Unread("docker is not running")}, roots, ecosystems, scanNow)
 
 	if _, ok := got.DockerData.Size(); ok || got.DockerData.Mark() != "docker is not running" {
 		t.Errorf("Docker data mark = %q, want docker is not running and no size", got.DockerData.Mark())

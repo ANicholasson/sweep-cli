@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/ecosystems"
@@ -70,7 +71,7 @@ func scanCommand(args []string, stdout, stderr io.Writer) int {
 		return misused
 	}
 
-	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All())
+	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now())
 
 	format := report.Table
 	if *asJSON {

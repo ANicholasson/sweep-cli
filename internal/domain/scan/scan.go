@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/safety"
@@ -53,13 +54,23 @@ type Docker interface {
 // whose Name sorts first, and under the earlier of that Ecosystem's Rules,
 // whatever order the Ecosystems come in.
 //
+// Last used is the newest modification among a Project's own files, outside
+// its Candidates. A Candidate is left out by its file identity, so another
+// spelling of the same directory does not count. A Candidate with no Project
+// takes the newest modification inside it. That time is a modification time,
+// never an access time. A Link is not followed. A Candidate is not Stale
+// when a directory in its Project could not be read, or a file's
+// modification time could not be read, because recent work could be in
+// what was not seen. Otherwise it is Stale when its Last used is older
+// than domain.StaleAfter before now.
+//
 // Docker data is asked once, for the whole machine, and set on the Result.
 // It is not a Candidate. Docker missing or not answering is that value's
 // own mark, not an Unreadable path, so a Scan that cannot reach Docker is
 // still complete.
 //
 // It cannot fail. What it could not read is in the Result.
-func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem) Result {
+func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time) Result {
 	s := scanner{
 		files:  files,
 		git:    git,
@@ -71,13 +82,17 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 	for _, root := range roots {
 		s.enter(string(root), string(root))
 	}
-	result := Result{Roots: slices.Clone(roots), Unreadable: s.unreadable, DockerData: docker.Data()}
+	var candidates []domain.Candidate
+	skip := map[FileID]bool{}
 	for _, f := range s.found {
-		if !s.inside[f.id] {
-			result.Candidates = append(result.Candidates, f.candidate)
+		if s.inside[f.id] {
+			continue
 		}
+		candidates = append(candidates, f.candidate)
+		skip[f.id] = true
 	}
-	return result
+	s.stamp(candidates, skip, now)
+	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data()}
 }
 
 type scanner struct {
@@ -120,14 +135,14 @@ func (s *scanner) enter(root, path string) {
 			continue
 		}
 		if r, ok := s.rules.recognise(e, entries); ok {
-			s.candidate(root, e, r)
+			s.candidate(root, e, r, path)
 			continue
 		}
 		s.enter(root, e.Path)
 	}
 }
 
-func (s *scanner) candidate(root string, dir Entry, r recogniser) {
+func (s *scanner) candidate(root string, dir Entry, r recogniser, project string) {
 	space, err := s.files.Space(dir.Path)
 	if err != nil {
 		s.unread(dir.Path, err)
@@ -145,7 +160,97 @@ func (s *scanner) candidate(root string, dir Entry, r recogniser) {
 		Size:      s.size(root, dir.Path, space),
 		Ecosystem: r.ecosystem,
 		Rule:      r.rule,
+		Project:   project,
 	}})
+}
+
+// stamp sets Last used and Stale. Candidates of one Project share one time.
+// A Candidate with no Project is measured on its own, from the files inside it.
+func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now time.Time) {
+	type age struct {
+		at      time.Time
+		blocked bool
+	}
+	known := map[string]age{}
+	staleBefore := now.Add(-domain.StaleAfter)
+	for i := range candidates {
+		c := &candidates[i]
+		var used time.Time
+		var blocked bool
+		if c.Project == "" {
+			used, blocked = s.newest(c.Path, nil)
+		} else if got, ok := known[c.Project]; ok {
+			used, blocked = got.at, got.blocked
+		} else {
+			used, blocked = s.newest(c.Project, skip)
+			known[c.Project] = age{used, blocked}
+		}
+		c.LastUsed = used
+		c.Stale = !blocked && used.Before(staleBefore)
+	}
+}
+
+// newest is the newest modification of the regular files at top and beneath
+// it. It never enters or reads a path that is not beneath top. A directory whose file identity is in skip is a Candidate and is not
+// entered, whichever path reaches it. A Link is not followed. The bool is
+// true when a directory could not be read, or a file's modification time
+// could not be read, so recent work could be in what was not seen.
+// A path discovery already could not read is not reported again.
+func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
+	var newest time.Time
+	var blocked bool
+	var walk func(string)
+	walk = func(dir string) {
+		entries, err := s.files.List(dir)
+		if err != nil {
+			s.noteUnread(dir, err)
+			blocked = true
+			return
+		}
+		for _, e := range entries {
+			if !safety.Beneath(top, e.Path, e.Is == Link) {
+				continue
+			}
+			switch e.Is {
+			case Dir:
+				space, err := s.files.Space(e.Path)
+				if err != nil {
+					s.noteUnread(e.Path, err)
+					blocked = true
+					continue
+				}
+				if skip[space.File] {
+					continue
+				}
+				walk(e.Path)
+			case File:
+				mod, err := s.files.Modified(e.Path)
+				if err != nil {
+					s.noteUnread(e.Path, err)
+					blocked = true
+					continue
+				}
+				if mod.After(newest) {
+					newest = mod
+				}
+			}
+		}
+	}
+	walk(top)
+	return newest, blocked
+}
+
+// noteUnread records a path the Last used walk could not read, unless that
+// path is already recorded. Discovery can meet one path twice, through a
+// Root inside a Candidate and again through the Root that holds it, and
+// those two stay. This walk is not a second Root.
+func (s *scanner) noteUnread(path string, err error) {
+	for _, u := range s.unreadable {
+		if u.Path == path {
+			return
+		}
+	}
+	s.unread(path, err)
 }
 
 func (s *scanner) size(root, path string, own Space) domain.Size {

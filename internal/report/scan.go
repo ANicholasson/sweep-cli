@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"text/tabwriter"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
@@ -23,26 +24,29 @@ var (
 )
 
 // Scan writes everything a Scan found: the Roots it used, each Candidate
-// with its path, Size, Kind and Reason, Docker data on a line of its own,
-// and every path it could not read.
+// grouped by Project with its path, Size, Kind, Last used, Stale mark and
+// Reason, Docker data on a line of its own, and every path it could not
+// read.
 //
 // The Table:
 //
 //	Roots
 //	  /work/projects
 //
-//	SIZE      KIND          PATH                                 REASON
-//	84.0 KiB  Dependencies  /work/projects/web-app/node_modules  npm install puts it back from package.json and the lockfile.
+//	/work/projects/web-app
+//	SIZE      KIND          PATH                                 LAST USED             STALE  REASON
+//	84.0 KiB  Dependencies  /work/projects/web-app/node_modules  2026-09-25 12:00:00Z  stale  npm install puts it back from package.json and the lockfile.
 //
 //	Docker data  1.2 GiB  reported only
 //
 //	Not read, so the list may be short and a Size may be low
 //	  /work/projects/locked: open /work/projects/locked: permission denied
 //
-// With no Candidate the table is the line "No Candidates." Docker data is
-// never a row of that table. When it could not be read the line names why,
-// such as "Docker data  docker is not running", and it has no size. The
-// last section is there only when something was not read.
+// With no Candidate the table is the line "No Candidates." A Candidate with
+// no Project is grouped under "(no Project)". Docker data is never a row of
+// that table. When it could not be read the line names why, such as
+// "Docker data  docker is not running", and it has no size. The last section
+// is there only when something was not read.
 func Scan(w io.Writer, result scan.Result, format Format) error {
 	var out bytes.Buffer
 	if format == JSON {
@@ -67,12 +71,22 @@ func table(out *bytes.Buffer, result scan.Result) {
 	if len(result.Candidates) == 0 {
 		out.WriteString("No Candidates.\n")
 	} else {
-		columns := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(columns, "SIZE\tKIND\tPATH\tREASON")
-		for _, c := range result.Candidates {
-			_, _ = fmt.Fprintf(columns, "%s\t%s\t%s\t%s\n", human(c.Size), c.Rule.Kind, c.Path, c.Rule.Reason)
+		for i, g := range grouped(result.Candidates) {
+			if i > 0 {
+				out.WriteString("\n")
+			}
+			fmt.Fprintf(out, "%s\n", g.heading)
+			columns := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintln(columns, "SIZE\tKIND\tPATH\tLAST USED\tSTALE\tREASON")
+			for _, c := range g.candidates {
+				mark := ""
+				if c.Stale {
+					mark = "stale"
+				}
+				_, _ = fmt.Fprintf(columns, "%s\t%s\t%s\t%s\t%s\t%s\n", human(c.Size), c.Rule.Kind, c.Path, when(c.LastUsed), mark, c.Rule.Reason)
+			}
+			_ = columns.Flush()
 		}
-		_ = columns.Flush()
 	}
 	writeDocker(out, result.DockerData)
 	if len(result.Unreadable) > 0 {
@@ -99,7 +113,9 @@ func writeDocker(out *bytes.Buffer, data domain.DockerData) {
 // its version.
 //
 // Every list is written as [] when it is empty, never null. Size is in
-// bytes. Kind is the Kind's name as GLOSSARY.md writes it. dockerData is
+// bytes. Kind is the Kind's name as GLOSSARY.md writes it. project is the
+// Project's path, or "" when the Candidate has none. last_used is UTC.
+// stale is true when the Scan marked the Candidate Stale. dockerData is
 // Docker data, never an entry of candidates.
 type scanV1 struct {
 	Version    int            `json:"version"`
@@ -117,11 +133,14 @@ type dockerV1 struct {
 }
 
 type candidateV1 struct {
-	Path      string `json:"path"`
-	Size      int64  `json:"size"`
-	Kind      string `json:"kind"`
-	Ecosystem string `json:"ecosystem"`
-	Reason    string `json:"reason"`
+	Path      string    `json:"path"`
+	Size      int64     `json:"size"`
+	Kind      string    `json:"kind"`
+	Ecosystem string    `json:"ecosystem"`
+	Reason    string    `json:"reason"`
+	Project   string    `json:"project"`
+	LastUsed  time.Time `json:"last_used"`
+	Stale     bool      `json:"stale"`
 }
 
 type unreadableV1 struct {
@@ -141,6 +160,9 @@ func toV1(result scan.Result) scanV1 {
 			Kind:      c.Rule.Kind.String(),
 			Ecosystem: c.Ecosystem,
 			Reason:    string(c.Rule.Reason),
+			Project:   c.Project,
+			LastUsed:  c.LastUsed.UTC(),
+			Stale:     c.Stale,
 		})
 	}
 	for _, u := range result.Unreadable {
@@ -152,6 +174,36 @@ func toV1(result scan.Result) scanV1 {
 		out.DockerData.Size = &n
 	}
 	return out
+}
+
+type projectGroup struct {
+	heading    string
+	candidates []domain.Candidate
+}
+
+// grouped keeps the Scan's order and puts Candidates of one Project together,
+// in the order the Scan first met that Project. A Candidate with no Project
+// stands in a group of its own, because its Last used is its own.
+func grouped(candidates []domain.Candidate) []projectGroup {
+	var out []projectGroup
+	index := map[string]int{}
+	for _, c := range candidates {
+		if c.Project == "" {
+			out = append(out, projectGroup{heading: "(no Project)", candidates: []domain.Candidate{c}})
+			continue
+		}
+		if i, ok := index[c.Project]; ok {
+			out[i].candidates = append(out[i].candidates, c)
+			continue
+		}
+		index[c.Project] = len(out)
+		out = append(out, projectGroup{heading: c.Project, candidates: []domain.Candidate{c}})
+	}
+	return out
+}
+
+func when(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05Z")
 }
 
 func human(size domain.Size) string {

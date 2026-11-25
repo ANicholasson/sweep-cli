@@ -14,17 +14,21 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type scanJSON struct {
 	Version    int      `json:"version"`
 	Roots      []string `json:"roots"`
 	Candidates []struct {
-		Path      string `json:"path"`
-		Size      int64  `json:"size"`
-		Kind      string `json:"kind"`
-		Ecosystem string `json:"ecosystem"`
-		Reason    string `json:"reason"`
+		Path      string    `json:"path"`
+		Size      int64     `json:"size"`
+		Kind      string    `json:"kind"`
+		Ecosystem string    `json:"ecosystem"`
+		Reason    string    `json:"reason"`
+		Project   string    `json:"project"`
+		LastUsed  time.Time `json:"last_used"`
+		Stale     bool      `json:"stale"`
 	} `json:"candidates"`
 	Unreadable []struct {
 		Path  string `json:"path"`
@@ -237,6 +241,52 @@ func TestScanOfTheFixture(t *testing.T) {
 		}
 	})
 
+	t.Run("each Candidate is grouped by Project, and Stale follows Last used", func(t *testing.T) {
+		out := scan(t, dir, root)
+		table := b.run(t, dir, "scan", root)
+		if table.status != 0 || table.stderr != "" {
+			t.Fatalf("sweep scan: exit status %d, stderr %q", table.status, table.stderr)
+		}
+		for _, c := range out.Candidates {
+			project := filepath.Dir(c.Path)
+			manifest := filepath.Join(project, "package.json")
+			info, err := os.Lstat(manifest)
+			if err != nil || !info.Mode().IsRegular() {
+				t.Errorf("%s: Project %s has no manifest", c.Path, c.Project)
+			}
+			if !sameDir(t, c.Project, project) {
+				t.Errorf("%s: Project = %s, want %s", c.Path, c.Project, project)
+			}
+			used := newestOutside(t, project, c.Path)
+			if !c.LastUsed.Equal(used) {
+				t.Errorf("%s: Last used = %s, and the newest file outside it is %s", c.Path, c.LastUsed, used)
+			}
+			stale := used.Before(time.Now().Add(-30 * 24 * time.Hour))
+			if c.Stale != stale {
+				t.Errorf("%s: Stale = %v, want %v from that file's modification time", c.Path, c.Stale, stale)
+			}
+			if !strings.Contains(table.stdout, "\n"+c.Project+"\n") {
+				t.Errorf("the table does not group %s under %s\n%s", c.Path, c.Project, table.stdout)
+			}
+			row := rowFor(t, table.stdout, c.Path)
+			if strings.Contains(row, " stale ") != c.Stale {
+				t.Errorf("the row %q marks Stale %v, and the JSON says %v", row, strings.Contains(row, " stale "), c.Stale)
+			}
+		}
+		var stale, recent bool
+		for _, c := range out.Candidates {
+			switch {
+			case strings.HasSuffix(filepath.ToSlash(c.Path), "projects/stale-app/node_modules"):
+				stale = c.Stale
+			case strings.HasSuffix(filepath.ToSlash(c.Path), "projects/recent-app/node_modules"):
+				recent = !c.Stale
+			}
+		}
+		if !stale || !recent {
+			t.Errorf("stale-app Stale = %v, recent-app not Stale = %v, want the Fixture's pair", stale, recent)
+		}
+	})
+
 	t.Run("a Scan that finds nothing writes empty lists, not null", func(t *testing.T) {
 		got := b.run(t, dir, "scan", "--json", t.TempDir())
 		if got.status != 0 {
@@ -314,53 +364,262 @@ func TestScanOfTheFixture(t *testing.T) {
 
 }
 
-func TestALinkRootReachedThroughALinkAppliesDotDot(t *testing.T) {
+func TestASecondSpellingOfACandidateDoesNotChangeLastUsed(t *testing.T) {
 	b := build(t)
 	top := t.TempDir()
-	for _, p := range []string{
-		filepath.Join(top, "deep", "target", "node_modules", "a.js"),
-		filepath.Join(top, "target", "node_modules", "b.js"),
-	} {
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	recent := time.Now().Add(-time.Hour)
+	write := func(rel string, when time.Time) {
+		t.Helper()
+		p := filepath.Join(top, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := os.MkdirAll(filepath.Join(top, "deep", "dir"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range []string{
-		filepath.Join(top, "deep", "target", "package.json"),
-		filepath.Join(top, "target", "package.json"),
-	} {
-		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+		if err := os.Chtimes(p, when, when); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Symlink(filepath.Join("deep", "dir"), filepath.Join(top, "alias")); err != nil {
-		if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+	write("app/package.json", old)
+	write("app/src/index.js", old)
+	write("app/node_modules/keep.js", old)
+	write("app/sub/package.json", old)
+	write("app/sub/src/index.js", old)
+	write("app/sub/node_modules/new.js", recent)
+	write("outside/new.js", recent)
+	link := func(target, name string) {
+		t.Helper()
+		err := os.Symlink(filepath.Join(top, filepath.FromSlash(target)), filepath.Join(top, filepath.FromSlash(name)))
+		if err != nil && runtime.GOOS == "windows" && os.Getenv("CI") == "" {
 			t.Skipf("this account may not make a symlink: %v", err)
 		}
-		t.Fatal(err)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.Symlink("../target", filepath.Join(top, "deep", "dir", "rootlink")); err != nil {
-		t.Fatal(err)
+	// alias is another spelling of app/sub. jump is a Link, and a Scan does not follow it.
+	link("app/sub", "alias")
+	link("outside", "app/jump")
+
+	app := filepath.Join(top, "app")
+	scan := func(roots ...string) scanJSON {
+		t.Helper()
+		got := b.run(t, top, append([]string{"scan", "--json"}, roots...)...)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("sweep scan --json %v: exit status %d, stderr %q", roots, got.status, got.stderr)
+		}
+		return decode(t, got)
+	}
+	parent := func(out scanJSON) (time.Time, bool) {
+		t.Helper()
+		var used time.Time
+		var stale bool
+		var n int
+		for _, c := range out.Candidates {
+			if sameDir(t, c.Path, filepath.Join(app, "node_modules")) {
+				n++
+				used, stale = c.LastUsed, c.Stale
+			}
+		}
+		if n != 1 {
+			t.Fatalf("app/node_modules is listed %d times in %+v", n, out.Candidates)
+		}
+		return used, stale
+	}
+	usedOf := func(path string) time.Time {
+		t.Helper()
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.ModTime()
 	}
 
-	got := b.run(t, top, "scan", "--json", filepath.Join("alias", "rootlink"))
-	if got.status != 0 || got.stderr != "" {
-		t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+	want := usedOf(filepath.Join(app, "src", "index.js"))
+	onlyUsed, onlyStale := parent(scan(app))
+	if !onlyStale || !onlyUsed.Equal(want) {
+		t.Fatalf("with one Root, Last used = %s, Stale = %v, want %s and Stale", onlyUsed, onlyStale, want)
+	}
+
+	both := scan(filepath.Join(top, "alias"), app)
+	bothUsed, bothStale := parent(both)
+	if !bothStale || !bothUsed.Equal(want) {
+		t.Errorf("with both spellings, Last used = %s, Stale = %v, want %s and Stale", bothUsed, bothStale, want)
+	}
+	nested := 0
+	for _, c := range both.Candidates {
+		if sameDir(t, c.Path, filepath.Join(app, "sub", "node_modules")) {
+			nested++
+		}
+	}
+	if nested != 1 {
+		t.Errorf("the nested Candidate is listed %d times, want once", nested)
+	}
+}
+
+func TestTouchingASourceFileClearsStaleAndACandidateFileDoesNot(t *testing.T) {
+	b := build(t)
+	dir, _ := b.buildFixture(t)
+	root := filepath.Join(dir, "projects")
+	project := filepath.Join(dir, "projects", "stale-app")
+	candidate := filepath.Join(project, "node_modules")
+	scan := func() scanJSON {
+		t.Helper()
+		got := b.run(t, dir, "scan", "--json", root)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("sweep scan --json: exit status %d, stderr %q", got.status, got.stderr)
+		}
+		return decode(t, got)
+	}
+	one := func(out scanJSON) (last time.Time, stale bool) {
+		t.Helper()
+		for _, c := range out.Candidates {
+			if sameDir(t, c.Path, candidate) {
+				return c.LastUsed, c.Stale
+			}
+		}
+		t.Fatal("the Stale Project's Candidate is not listed")
+		return time.Time{}, false
+	}
+
+	last, stale := one(scan())
+	used := newestOutside(t, project, candidate)
+	if !stale || !last.Equal(used) {
+		t.Fatalf("Last used = %s, Stale = %v, want %s and Stale", last, stale, used)
+	}
+
+	inside := filepath.Join(candidate, "fake-old", "index.js")
+	if err := os.Chtimes(inside, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	last, stale = one(scan())
+	used = newestOutside(t, project, candidate)
+	if !stale || !last.Equal(used) {
+		t.Errorf("after a file inside the Candidate changed, Last used = %s, Stale = %v, want %s and still Stale", last, stale, used)
+	}
+
+	src := filepath.Join(project, "src", "index.js")
+	if err := os.Chtimes(src, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	last, stale = one(scan())
+	used = newestOutside(t, project, candidate)
+	if stale || !last.Equal(used) {
+		t.Errorf("after a source file changed, Last used = %s, Stale = %v, want %s and not Stale", last, stale, used)
+	}
+}
+
+func TestAnUnreadableModificationTimeIsNotStale(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("only an account that is not root can be refused a file by its directory's mode")
+	}
+	b := build(t)
+	top := t.TempDir()
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	for _, rel := range []string{"app/package.json", "app/src/index.js", "app/node_modules/a/index.js"} {
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := filepath.Join(top, "app", "src")
+	hidden := filepath.Join(src, "index.js")
+	if err := os.Chmod(src, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(src, 0o755) })
+	if _, err := os.ReadDir(src); err != nil {
+		t.Skipf("this system will not list a directory it cannot search: %v", err)
+	}
+	if _, err := os.Lstat(hidden); err == nil {
+		t.Fatal("the file's modification time can still be read, so the test shows nothing")
+	}
+
+	root := filepath.Join(top, "app")
+	got := b.run(t, top, "scan", "--json", root)
+	if got.status != 1 {
+		t.Fatalf("exit status %d, stderr %q, want 1", got.status, got.stderr)
 	}
 	out := decode(t, got)
-	want := filepath.Join(top, "deep", "target", "node_modules")
-	decoy := filepath.Join(top, "target", "node_modules")
-	if len(out.Candidates) != 1 || !sameDir(t, out.Candidates[0].Path, want) || sameDir(t, out.Candidates[0].Path, decoy) {
-		t.Errorf("candidates = %+v, want %s", out.Candidates, want)
+	if len(out.Unreadable) != 1 || filepath.Clean(out.Unreadable[0].Path) != filepath.Clean(hidden) {
+		t.Errorf("unreadable = %+v, want %s once", out.Unreadable, hidden)
 	}
-	if len(out.Roots) != 1 || !sameDir(t, out.Roots[0], filepath.Join(top, "deep", "target")) || sameDir(t, out.Roots[0], filepath.Join(top, "target")) {
-		t.Errorf("roots = %v, want %s", out.Roots, filepath.Join(top, "deep", "target"))
+	if len(out.Candidates) != 1 || out.Candidates[0].Stale {
+		t.Errorf("candidates = %+v, want one Candidate that is not Stale", out.Candidates)
+	}
+}
+
+func TestAnUnreadableDirectoryInAProjectIsListedOnceAndIsNotStale(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("only an account that is not root can be refused a directory by its mode")
+	}
+	b := build(t)
+	top := t.TempDir()
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	for _, rel := range []string{
+		"app/package.json",
+		"app/src/index.js",
+		"app/node_modules/a/index.js",
+		"app/sub/package.json",
+		"app/sub/src/index.js",
+		"app/sub/node_modules/b/index.js",
+		"app/sub/sealed/keep.js",
+	} {
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sealed := filepath.Join(top, "app", "sub", "sealed")
+	if err := os.Chmod(sealed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0o755) })
+
+	root := filepath.Join(top, "app")
+	got := b.run(t, top, "scan", "--json", root)
+	if got.status != 1 {
+		t.Fatalf("exit status %d, stderr %q, want 1", got.status, got.stderr)
+	}
+	out := decode(t, got)
+	if len(out.Unreadable) != 1 || !sameDir(t, out.Unreadable[0].Path, sealed) {
+		t.Errorf("unreadable = %+v, want %s once", out.Unreadable, sealed)
+	}
+	if len(out.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want the Project and the nested Project", out.Candidates)
+	}
+	for _, c := range out.Candidates {
+		if c.Stale {
+			t.Errorf("%s is Stale, and its Project holds a directory that could not be read", c.Path)
+		}
+	}
+
+	table := b.run(t, top, "scan", root)
+	if table.status != 1 {
+		t.Fatalf("table exit status %d, want 1", table.status)
+	}
+	listed := 0
+	for _, line := range strings.Split(table.stdout, "\n") {
+		if strings.Contains(line, sealed) {
+			listed++
+		}
+	}
+	if listed != 1 {
+		t.Errorf("the table lists %s on %d lines\n%s", sealed, listed, table.stdout)
 	}
 }
 
@@ -436,6 +695,7 @@ type row struct {
 	cells              []string
 	size, within       float64
 	kind, path, reason string
+	stale              bool
 }
 
 func readTable(t *testing.T, out string) ([]string, []row) {
@@ -455,22 +715,132 @@ func readTable(t *testing.T, out string) ([]string, []row) {
 	units := map[string]float64{"B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40}
 	var rows []row
 	for _, l := range lines[header+1:] {
-		if l == "" {
+		if strings.HasPrefix(l, "Not read") {
 			break
 		}
+		if l == "" || strings.HasPrefix(l, "SIZE") {
+			continue
+		}
 		cells := regexp.MustCompile(`\s{2,}`).Split(strings.TrimSpace(l), -1)
-		number, unit, _ := strings.Cut(cells[0], " ")
+		number, unit, ok := strings.Cut(cells[0], " ")
 		value, err := strconv.ParseFloat(number, 64)
-		if len(cells) != 4 || err != nil || units[unit] == 0 {
-			t.Fatalf("the row %q is not SIZE, KIND, PATH and REASON", l)
+		if !ok || err != nil || units[unit] == 0 {
+			continue
+		}
+		var reason string
+		var stale bool
+		switch {
+		case len(cells) == 6 && cells[4] == "stale":
+			stale, reason = true, cells[5]
+		case len(cells) == 5:
+			reason = cells[4]
+		default:
+			t.Fatalf("the row %q is not SIZE, KIND, PATH, LAST USED, STALE and REASON", l)
 		}
 		within := 0.05 * units[unit]
 		if unit == "B" {
 			within = 0
 		}
-		rows = append(rows, row{cells, value * units[unit], within, cells[1], cells[2], cells[3]})
+		rows = append(rows, row{cells, value * units[unit], within, cells[1], cells[2], reason, stale})
 	}
 	return roots, rows
+}
+
+// newestOutside is the newest modification of the regular files in project
+// outside the Candidate, which is what Last used must equal.
+func newestOutside(t *testing.T, project, candidate string) time.Time {
+	t.Helper()
+	var newest time.Time
+	err := filepath.WalkDir(project, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == project {
+			return err
+		}
+		if p == candidate || strings.HasPrefix(p, candidate+string(filepath.Separator)) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newest.IsZero() {
+		t.Fatalf("%s has no file outside %s", project, candidate)
+	}
+	return newest
+}
+
+func rowFor(t *testing.T, out, path string) string {
+	t.Helper()
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, path) {
+			return l
+		}
+	}
+	t.Fatalf("no row contains %s\n%s", path, out)
+	return ""
+}
+
+func TestALinkRootReachedThroughALinkAppliesDotDot(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	for _, p := range []string{
+		filepath.Join(top, "deep", "target", "node_modules", "a.js"),
+		filepath.Join(top, "target", "node_modules", "b.js"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(top, "deep", "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		filepath.Join(top, "deep", "target", "package.json"),
+		filepath.Join(top, "target", "package.json"),
+	} {
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("deep", "dir"), filepath.Join(top, "alias")); err != nil {
+		if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+			t.Skipf("this account may not make a symlink: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../target", filepath.Join(top, "deep", "dir", "rootlink")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := b.run(t, top, "scan", "--json", filepath.Join("alias", "rootlink"))
+	if got.status != 0 || got.stderr != "" {
+		t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+	}
+	out := decode(t, got)
+	want := filepath.Join(top, "deep", "target", "node_modules")
+	decoy := filepath.Join(top, "target", "node_modules")
+	if len(out.Candidates) != 1 || !sameDir(t, out.Candidates[0].Path, want) || sameDir(t, out.Candidates[0].Path, decoy) {
+		t.Errorf("candidates = %+v, want %s", out.Candidates, want)
+	}
+	if len(out.Roots) != 1 || !sameDir(t, out.Roots[0], filepath.Join(top, "deep", "target")) || sameDir(t, out.Roots[0], filepath.Join(top, "target")) {
+		t.Errorf("roots = %v, want %s", out.Roots, filepath.Join(top, "deep", "target"))
+	}
 }
 
 func TestDockerSystemDFTotalsAreThePrintedUnits(t *testing.T) {

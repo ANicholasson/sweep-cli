@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain/ecosystems"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
@@ -135,7 +136,7 @@ func TestARootGivenAsALinkIsResolvedOnce(t *testing.T) {
 		t.Fatalf("roots = %v, want %s", roots, real)
 	}
 
-	got := scan.Scan(files.Disk{}, git.Local{}, sweeptest.Docker{}, roots, ecosystems.All())
+	got := scan.Scan(files.Disk{}, git.Local{}, sweeptest.Docker{}, roots, ecosystems.All(), time.Now())
 	want := filepath.Join(real, "app", "node_modules")
 	if len(got.Candidates) != 1 || !sameFile(t, got.Candidates[0].Path, want) {
 		t.Errorf("candidates = %+v, want %s", got.Candidates, want)

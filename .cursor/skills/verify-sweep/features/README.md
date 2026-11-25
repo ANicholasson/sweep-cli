@@ -6,7 +6,7 @@ This directory is the maintained source for verifying what a user of `sweep` see
 
 - `H` is the helper, `.cursor/skills/verify-sweep/scripts/sweep-verify`, and `RUN` is the directory `"$H" launch` printed, from the checkout under test.
 - `"$H" doctor "$RUN"` ends with `doctor: worth driving`.
-- The Fixture at `$RUN/fixture` is as the fixture tool built it. Its Answer key (`answer-key.json`, version 1) names the Root `projects`, three Candidates, all Dependencies: `projects/web-app/node_modules`, `projects/tracked-app/ignored-app/node_modules` and `projects/tracked-app/untracked-app/node_modules`. It names two Traps: `projects/tracked-app/node_modules` (git tracks its files) and `outside/stray-app/node_modules` (outside the Root).
+- The Fixture at `$RUN/fixture` is as the fixture tool built it. Its Answer key (`answer-key.json`, version 1) names the Root `projects`, five Candidates, all Dependencies: `projects/web-app/node_modules`, `projects/stale-app/node_modules`, `projects/recent-app/node_modules`, `projects/tracked-app/ignored-app/node_modules` and `projects/tracked-app/untracked-app/node_modules`. `stale-app` was last used 60 days before the Fixture was built, and `recent-app` one day before. It names two Traps: `projects/tracked-app/node_modules` (git tracks its files) and `outside/stray-app/node_modules` (outside the Root).
 - Never drive a run that this verification did not launch.
 
 ## Driving conventions
@@ -37,9 +37,9 @@ Keep implementation details out of the map. Name only user paths, commands, requ
 
 ## Features
 
-- [Scan as a table](./scan-table.md) covers the Roots header, one row per Candidate with Size, Kind, path and Reason, and `No Candidates.`.
+- [Scan as a table](./scan-table.md) covers the Roots header, Candidates grouped by Project, one row per Candidate with Size, Kind, path, Last used, the Stale mark and Reason, and `No Candidates.`.
 - [Docker data](./scan-docker.md) covers the one reported-only line, the `dockerData` field, and a Scan that still exits zero when Docker is missing or not running.
-- [Scan as JSON](./scan-json.md) covers the version 1 document, exact Sizes against `du`, the Answer key's Candidates, and empty lists.
+- [Scan as JSON](./scan-json.md) covers the version 1 document, exact Sizes against `du`, the Answer key's Candidates, each Candidate's Project, Last used and Stale mark, and empty lists.
 - [Choosing Roots](./scan-roots.md) covers the default Root, several and overlapping Roots, flags after Roots, `--`, the Root rule Trap, and bad Roots that stop the Scan.
 - [A Scan that cannot read everything](./scan-unreadable.md) covers exit status 1 and the unreadable list in both formats.
 - [Version and usage](./version-and-usage.md) covers `--version`, the usage message, and unknown commands and flags.
