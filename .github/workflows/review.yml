@@ -16,8 +16,10 @@ on:
 permissions:
   contents: read
 
+# The label is part of the group, so another label added while a review runs
+# starts in a group of its own and cannot cancel it.
 concurrency:
-  group: review-${{ github.event.pull_request.number }}
+  group: review-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
   cancel-in-progress: true
 
 jobs:
@@ -65,7 +67,7 @@ jobs:
             2. Read the whole diff with `gh pr diff ${{ github.event.pull_request.number }}`. Note anything it does that the issue does not ask for.
             3. List every review thread, resolved or not, with `gh api graphql`. Reproduce each finding against this checkout and say whether it is real and whether the code now fixes it, whatever the replies claim.
             4. Run `scripts/verify.sh` and record its last line and exit status.
-            5. Follow `.cursor/skills/verify-sweep/SKILL.md`: launch, doctor, then drive the recipe of every feature the diff touches. When the diff touches how a Scan walks, resolves a Root, reads Last used, applies the Git rule or asks Docker, drive all of `features/scan-hostile.md` too. Run the issue's Verify line by hand.
+            5. Follow `.cursor/skills/verify-sweep/SKILL.md`: launch, doctor, then drive the recipe of every feature the diff touches. When the diff touches how a Scan walks, resolves a Root, reads Last used, applies the Git rule or asks Docker, drive all of `features/scan-hostile.md` too. If a recipe this step names is not in the checkout, say so in the verdict and do not invent one. Run the issue's Verify line by hand.
             6. Go through the issue's acceptance criteria one by one: met, partly, or not met, each with its evidence.
             7. Try to break the change with cases that neither the tests nor the recipes cover. Compare with the same command on the base branch when a result looks wrong, to tell a regression from an old defect.
             8. Check that the tests take their expected values from outside sweep: du, git, a file listing, a time the test set. A test that compares sweep with sweep proves nothing.
