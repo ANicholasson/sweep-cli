@@ -149,7 +149,7 @@ func (o *offered) Space(string) (scan.Space, error) {
 }
 
 func TestAScanDropsAPathOutsideTheRootAndALink(t *testing.T) {
-	got := scan.Scan(&offered{}, sweeptest.Git{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got := scan.Scan(&offered{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
 
 	if len(got.Candidates) != 0 || len(got.Unreadable) != 0 {
 		t.Errorf("Candidates = %+v, Unreadable = %v, want neither", got.Candidates, got.Unreadable)
@@ -182,7 +182,7 @@ func (o *namedWithABackslash) Space(string) (scan.Space, error) {
 }
 
 func TestAScanKeepsAPosixNameThatContainsABackslash(t *testing.T) {
-	got := scan.Scan(&namedWithABackslash{}, sweeptest.Git{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+	got := scan.Scan(&namedWithABackslash{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
 
 	want := sweeptest.Top + `/\../node_modules`
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != want {
@@ -216,7 +216,7 @@ func (m *mounted) Space(string) (scan.Space, error) {
 }
 
 func TestAScanOfAVolumeMountListsItsCandidates(t *testing.T) {
-	got := scan.Scan(&mounted{}, sweeptest.Git{}, []domain.Root{volumeRoot}, []domain.Ecosystem{web})
+	got := scan.Scan(&mounted{}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{volumeRoot}, []domain.Ecosystem{web})
 
 	want := volumeRoot + "node_modules"
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != want || len(got.Unreadable) != 0 {
