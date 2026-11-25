@@ -6,8 +6,12 @@ name: review
 # the work is believed done and not on every push. To ask again after a fix,
 # remove the label and add it back.
 #
-# It needs the secret CLAUDE_CODE_OAUTH_TOKEN and the reviewer's GitHub App on
-# this repository. A pull request from a fork never starts it.
+# It needs the secret CLAUDE_CODE_OAUTH_TOKEN. A pull request from a fork never
+# starts it.
+#
+# The reviewer works with this job's own token, not a token of its GitHub App,
+# so the permissions below are what it can do: read the code and write to a
+# pull request's conversation. It cannot push, and it cannot merge.
 
 on:
   pull_request:
@@ -31,9 +35,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: read
-      id-token: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -48,6 +51,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_bots: "cursor[bot]"
           claude_args: >-
             --max-turns 120
