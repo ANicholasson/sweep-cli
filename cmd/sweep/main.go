@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 
@@ -102,9 +101,6 @@ func parseInterspersed(flags *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// A Link in a Root is not resolved: since Go 1.23
-// filepath.EvalSymlinks leaves a Windows junction alone, so resolving would
-// mean one thing on Windows and another elsewhere.
 func rootsOf(given []string) ([]domain.Root, error) {
 	if len(given) == 0 {
 		given = []string{"."}
@@ -112,10 +108,10 @@ func rootsOf(given []string) ([]domain.Root, error) {
 	var roots []domain.Root
 	var errs []error
 	for _, p := range given {
-		abs, err := filepath.Abs(p)
+		resolved, err := files.Resolve(p)
 		if err == nil {
 			var info os.FileInfo
-			info, err = os.Stat(abs)
+			info, err = os.Lstat(resolved)
 			if err == nil && !info.IsDir() {
 				err = errors.New("it is not a directory")
 			}
@@ -124,7 +120,7 @@ func rootsOf(given []string) ([]domain.Root, error) {
 			errs = append(errs, fmt.Errorf("%s cannot be a Root: %w", p, err))
 			continue
 		}
-		roots = append(roots, domain.Root(abs))
+		roots = append(roots, domain.Root(resolved))
 	}
 	return roots, errors.Join(errs...)
 }

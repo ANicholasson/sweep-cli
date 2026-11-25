@@ -2,9 +2,10 @@
 package files
 
 import (
+	"cmp"
 	"io/fs"
-	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 )
@@ -14,13 +15,20 @@ type Disk struct{}
 
 var _ scan.Files = Disk{}
 
-// List reads one directory. os.ReadDir gives the names in order, and each
-// one's type from the directory read itself, without following it.
+// List reads one directory without following a Link at the end of dir, so a
+// directory swapped for a Link while a Scan runs is not followed. Names come
+// back in order, and each one's type comes from the directory read itself.
 func (Disk) List(dir string) ([]scan.Entry, error) {
-	inside, err := os.ReadDir(dir)
+	f, err := openDir(dir)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = f.Close() }()
+	inside, err := f.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(inside, func(a, b fs.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
 	entries := make([]scan.Entry, len(inside))
 	for i, e := range inside {
 		entries[i] = scan.Entry{Name: e.Name(), Path: filepath.Join(dir, e.Name()), Is: is(e.Type())}

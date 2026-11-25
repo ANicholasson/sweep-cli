@@ -120,6 +120,110 @@ func TestAScanNeverEntersALinkAndNeverListsOne(t *testing.T) {
 	}
 }
 
+// offered names a Candidate outside the Root and a Link a Rule would
+// recognise. The fake cannot: its tree stays beneath its top, and a Link
+// there has no manifest beside it.
+type offered struct{ n uint64 }
+
+func (o *offered) List(dir string) ([]scan.Entry, error) {
+	switch dir {
+	case sweeptest.Top:
+		return []scan.Entry{
+			{Name: "package.json", Path: sweeptest.Top + "/package.json", Is: scan.File},
+			{Name: "node_modules", Path: "/outside/node_modules", Is: scan.Dir},
+			{Name: "app", Path: sweeptest.Top + "/app", Is: scan.Dir},
+		}, nil
+	case sweeptest.Top + "/app":
+		return []scan.Entry{
+			{Name: "package.json", Path: sweeptest.Top + "/app/package.json", Is: scan.File},
+			{Name: "node_modules", Path: sweeptest.Top + "/app/node_modules", Is: scan.Link},
+		}, nil
+	default:
+		return nil, errors.New(dir)
+	}
+}
+
+func (o *offered) Space(string) (scan.Space, error) {
+	o.n++
+	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: o.n}}, nil
+}
+
+func TestAScanDropsAPathOutsideTheRootAndALink(t *testing.T) {
+	got := scan.Scan(&offered{}, sweeptest.Git{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+
+	if len(got.Candidates) != 0 || len(got.Unreadable) != 0 {
+		t.Errorf("Candidates = %+v, Unreadable = %v, want neither", got.Candidates, got.Unreadable)
+	}
+}
+
+// namedWithABackslash is a directory whose name contains a backslash.
+// On Linux and macOS that is a legal name. The fake's paths are
+// slash-separated and cannot spell it.
+type namedWithABackslash struct{ n uint64 }
+
+func (o *namedWithABackslash) List(dir string) ([]scan.Entry, error) {
+	const held = sweeptest.Top + `/\..`
+	switch dir {
+	case sweeptest.Top:
+		return []scan.Entry{{Name: `\..`, Path: held, Is: scan.Dir}}, nil
+	case held:
+		return []scan.Entry{
+			{Name: "package.json", Path: held + "/package.json", Is: scan.File},
+			{Name: "node_modules", Path: held + "/node_modules", Is: scan.Dir},
+		}, nil
+	default:
+		return nil, errors.New(dir)
+	}
+}
+
+func (o *namedWithABackslash) Space(string) (scan.Space, error) {
+	o.n++
+	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: o.n}}, nil
+}
+
+func TestAScanKeepsAPosixNameThatContainsABackslash(t *testing.T) {
+	got := scan.Scan(&namedWithABackslash{}, sweeptest.Git{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web})
+
+	want := sweeptest.Top + `/\../node_modules`
+	if len(got.Candidates) != 1 || got.Candidates[0].Path != want {
+		t.Errorf("Candidates = %+v, want %s", got.Candidates, want)
+	}
+}
+
+// mounted is a Root Readlink resolves to a Windows volume path. The fake
+// cannot build a mount point.
+const volumeRoot = `\\?\Volume{11111111-2222-3333-4444-555555555555}\`
+
+type mounted struct{ n uint64 }
+
+func (m *mounted) List(dir string) ([]scan.Entry, error) {
+	switch dir {
+	case volumeRoot:
+		return []scan.Entry{
+			{Name: "package.json", Path: volumeRoot + "package.json", Is: scan.File},
+			{Name: "node_modules", Path: volumeRoot + "node_modules", Is: scan.Dir},
+		}, nil
+	case volumeRoot + "node_modules":
+		return nil, nil
+	default:
+		return nil, errors.New(dir)
+	}
+}
+
+func (m *mounted) Space(string) (scan.Space, error) {
+	m.n++
+	return scan.Space{Bytes: sweeptest.DirSpace, File: scan.FileID{Volume: 1, File: m.n}}, nil
+}
+
+func TestAScanOfAVolumeMountListsItsCandidates(t *testing.T) {
+	got := scan.Scan(&mounted{}, sweeptest.Git{}, []domain.Root{volumeRoot}, []domain.Ecosystem{web})
+
+	want := volumeRoot + "node_modules"
+	if len(got.Candidates) != 1 || got.Candidates[0].Path != want || len(got.Unreadable) != 0 {
+		t.Errorf("Candidates = %+v, Unreadable = %v, want %s", got.Candidates, got.Unreadable, want)
+	}
+}
+
 func TestTheGitRuleKeepsAPathOutOfTheCandidates(t *testing.T) {
 	files := sweeptest.NewFiles(sweeptest.Tree{
 		"app/package.json":                       sweeptest.File{Bytes: 1},

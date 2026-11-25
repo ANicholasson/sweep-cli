@@ -90,7 +90,7 @@ func matchesAnswerKey(t *testing.T, dir string) {
 		}
 	}
 
-	var outside, tracked int
+	var outside, tracked, linked int
 	for _, tr := range key.Traps {
 		if !isDir(dir, tr.Path) {
 			t.Errorf("Trap %s is not a directory in the Fixture", tr.Path)
@@ -105,10 +105,12 @@ func matchesAnswerKey(t *testing.T, dir string) {
 		switch {
 		case !beneath(tr.Path, key.Root):
 			outside++
+		case linkOnTheWay(dir, tr.Path):
+			linked++
 		case len(trackedFiles(t, dir, tr.Path)) > 0:
 			tracked++
 		default:
-			t.Errorf("Trap %s is beneath the Root, yet git tracks nothing in it", tr.Path)
+			t.Errorf("Trap %s is beneath the Root, yet git tracks nothing in it and no Link leads to it", tr.Path)
 		}
 	}
 	if outside == 0 {
@@ -116,6 +118,9 @@ func matchesAnswerKey(t *testing.T, dir string) {
 	}
 	if tracked == 0 {
 		t.Error("no Trap holds files git tracks")
+	}
+	if linked == 0 {
+		t.Error("no Trap is reached through a Link")
 	}
 }
 
@@ -286,6 +291,21 @@ func hasPair(files []os.FileInfo) bool {
 
 func beneath(p, dir string) bool {
 	return p == dir || strings.HasPrefix(p, dir+"/")
+}
+
+func linkOnTheWay(dir, p string) bool {
+	cur := dir
+	for _, name := range strings.Split(p, "/") {
+		cur = filepath.Join(cur, name)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			return false
+		}
+		if info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 type node struct {

@@ -13,7 +13,8 @@ Status: early development.
 A Scan looks beneath each Root, or beneath the current directory when you
 give none, and lists every Candidate a Rule recognises, such as a
 `node_modules` beside a `package.json`, with its Size, Kind, path and
-Reason. It leaves out a path that holds a file git tracks, and a path
+Reason. A Root that is a Link is resolved once, and a Link beneath a Root
+is not followed. It leaves out a path that holds a file git tracks, and a path
 when git is missing or cannot answer. A path outside a work tree is
 still listed, and so is a path inside one that holds nothing git tracks.
 It prints the Roots it used, and it changes nothing. `--json` prints the
@@ -42,6 +43,8 @@ sweep deletes files, so these rules are non-negotiable:
 2. Never follow a link (a symlink, or a junction on Windows) out of a
    root, and never touch a path outside the roots.
 3. If anything changed between the plan and the delete, skip that path.
+
+A Scan does not close one case. A directory above the one being listed can be swapped for a Link and then followed. A Clean must.
 
 Deleted items go to the OS trash by default. Permanent delete is opt-in.
 
