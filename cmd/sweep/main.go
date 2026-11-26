@@ -18,6 +18,7 @@ import (
 	"github.com/ANicholasson/sweep-cli/internal/domain/plan"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 	"github.com/ANicholasson/sweep-cli/internal/report"
+	"github.com/ANicholasson/sweep-cli/internal/system/config"
 	"github.com/ANicholasson/sweep-cli/internal/system/docker"
 	"github.com/ANicholasson/sweep-cli/internal/system/files"
 	"github.com/ANicholasson/sweep-cli/internal/system/git"
@@ -72,13 +73,30 @@ func scanCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return misused
 	}
+	cfg, err := configuration()
+	if err != nil {
+		writeErr(stderr, err)
+		return misused
+	}
+	if len(given) == 0 {
+		given = cfg.Roots
+	}
 	roots, err := rootsOf(given)
 	if err != nil {
 		say(stderr, err)
 		return misused
 	}
+	ignore, err := resolveIgnore(cfg.Ignore)
+	if err != nil {
+		say(stderr, err)
+		return misused
+	}
 
-	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now())
+	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), scan.Settings{
+		StaleAfter: cfg.StaleAfter,
+		Ignore:     ignore,
+	})
+	result.Configuration = cfg.Path
 
 	format := report.Table
 	if *asJSON {
@@ -286,6 +304,14 @@ func (r *repeated) Set(s string) error {
 	return nil
 }
 
+func configuration() (domain.Configuration, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return domain.Configuration{}, err
+	}
+	return config.Load(dir)
+}
+
 func parseInterspersed(flags *flag.FlagSet, args []string) ([]string, error) {
 	var rest []string
 	for {
@@ -299,6 +325,22 @@ func parseInterspersed(flags *flag.FlagSet, args []string) ([]string, error) {
 		}
 		rest, args = append(rest, left[0]), left[1:]
 	}
+}
+
+func resolveIgnore(paths []string) ([]string, error) {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		resolved, err := files.Resolve(p)
+		if errors.Is(err, os.ErrNotExist) {
+			out[i] = p
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s cannot be ignored: %w", p, err)
+		}
+		out[i] = resolved
+	}
+	return out, nil
 }
 
 func rootsOf(given []string) ([]domain.Root, error) {

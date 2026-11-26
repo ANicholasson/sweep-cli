@@ -11,7 +11,7 @@ type Root string
 type Size int64
 
 // StaleAfter is how old a Candidate's Last used must be before a Scan marks
-// it Stale.
+// it Stale, when the configuration file does not set a threshold.
 const StaleAfter = 30 * 24 * time.Hour
 
 // Candidate is a directory or file that a Rule of an Ecosystem recognised.
@@ -27,6 +27,6 @@ type Candidate struct {
 	// outside its Candidates. A Candidate with no Project takes the newest
 	// modification inside it.
 	LastUsed time.Time
-	// Stale is true when LastUsed is older than StaleAfter.
+	// Stale is true when LastUsed is older than the Stale threshold.
 	Stale bool
 }

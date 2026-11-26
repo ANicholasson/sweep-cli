@@ -27,6 +27,9 @@ type Result struct {
 	// DockerData is the space Docker images and build cache hold, or why
 	// it could not be read. It is never a Candidate.
 	DockerData domain.DockerData
+	// Configuration is the configuration file that was read, or empty when
+	// there was none. A Scan leaves it empty.
+	Configuration string
 }
 
 // Unreadable is a path the Scan could not read, and why.
@@ -39,6 +42,15 @@ type Unreadable struct {
 // or changes anything.
 type Docker interface {
 	Data() domain.DockerData
+}
+
+// Settings is the Stale threshold and the Ignore list for one Scan.
+// StaleAfter is how old Last used must be before a Candidate is Stale.
+// Zero means a Candidate is Stale when its Last used is before now.
+// Each Ignore path, and everything beneath it, is left out of the Scan.
+type Settings struct {
+	StaleAfter time.Duration
+	Ignore     []string
 }
 
 // Scan looks beneath each Root for the directories that the InProject Rules
@@ -62,7 +74,11 @@ type Docker interface {
 // when a directory in its Project could not be read, or a file's
 // modification time could not be read, because recent work could be in
 // what was not seen. Otherwise it is Stale when its Last used is older
-// than domain.StaleAfter before now.
+// than StaleAfter before now.
+//
+// A path on the Ignore list, and everything beneath it, is left out. It is
+// not a Candidate, and a path beneath it that could not be read is not
+// reported. A path that only shares a prefix with an ignored path is kept.
 //
 // Docker data is asked once, for the whole machine, and set on the Result.
 // It is not a Candidate. Docker missing or not answering is that value's
@@ -70,7 +86,7 @@ type Docker interface {
 // still complete.
 //
 // It cannot fail. What it could not read is in the Result.
-func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time) Result {
+func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time, settings Settings) Result {
 	s := scanner{
 		files:  files,
 		git:    git,
@@ -78,6 +94,7 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 		walked: map[FileID]bool{},
 		listed: map[FileID]bool{},
 		inside: map[FileID]bool{},
+		ignore: settings.Ignore,
 	}
 	for _, root := range roots {
 		s.enter(string(root), string(root))
@@ -91,7 +108,7 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 		candidates = append(candidates, f.candidate)
 		skip[f.id] = true
 	}
-	s.stamp(candidates, skip, now)
+	s.stamp(candidates, skip, now, settings.StaleAfter)
 	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data()}
 }
 
@@ -102,6 +119,7 @@ type scanner struct {
 	walked map[FileID]bool
 	listed map[FileID]bool
 	inside map[FileID]bool
+	ignore []string
 
 	found      []found
 	unreadable []Unreadable
@@ -113,7 +131,7 @@ type found struct {
 }
 
 func (s *scanner) enter(root, path string) {
-	if !safety.Beneath(root, path, false) {
+	if s.ignored(path) || !safety.Beneath(root, path, false) {
 		return
 	}
 	space, err := s.files.Space(path)
@@ -131,7 +149,7 @@ func (s *scanner) enter(root, path string) {
 		return
 	}
 	for _, e := range entries {
-		if !safety.Beneath(root, e.Path, e.Is == Link) || e.Is != Dir {
+		if s.ignored(e.Path) || !safety.Beneath(root, e.Path, e.Is == Link) || e.Is != Dir {
 			continue
 		}
 		if r, ok := s.rules.recognise(e, entries); ok {
@@ -166,13 +184,13 @@ func (s *scanner) candidate(root string, dir Entry, r recogniser, project string
 
 // stamp sets Last used and Stale. Candidates of one Project share one time.
 // A Candidate with no Project is measured on its own, from the files inside it.
-func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now time.Time) {
+func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now time.Time, staleAfter time.Duration) {
 	type age struct {
 		at      time.Time
 		blocked bool
 	}
 	known := map[string]age{}
-	staleBefore := now.Add(-domain.StaleAfter)
+	staleBefore := now.Add(-staleAfter)
 	for i := range candidates {
 		c := &candidates[i]
 		var used time.Time
@@ -208,7 +226,7 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 			return
 		}
 		for _, e := range entries {
-			if !safety.Beneath(top, e.Path, e.Is == Link) {
+			if s.ignored(e.Path) || !safety.Beneath(top, e.Path, e.Is == Link) {
 				continue
 			}
 			switch e.Is {
@@ -238,6 +256,15 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 	}
 	walk(top)
 	return newest, blocked
+}
+
+func (s *scanner) ignored(path string) bool {
+	for _, root := range s.ignore {
+		if safety.Beneath(root, path, false) {
+			return true
+		}
+	}
+	return false
 }
 
 // noteUnread records a path the Last used walk could not read, unless that

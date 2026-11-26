@@ -17,7 +17,10 @@ import (
 	"testing"
 )
 
-type binaries struct{ sweep, fixture string }
+type binaries struct {
+	sweep, fixture string
+	config         string
+}
 
 func build(t *testing.T) binaries {
 	t.Helper()
@@ -68,6 +71,11 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	t.Helper()
 	cmd := exec.Command(b.sweep, args...)
 	cmd.Dir = dir
+	home := b.config
+	if home == "" {
+		home = t.TempDir()
+	}
+	cmd.Env = pointConfiguration(os.Environ(), home)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -192,6 +200,25 @@ func command(t *testing.T, name string, args ...string) {
 	if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
 		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out)
 	}
+}
+
+func pointConfiguration(env []string, home string) []string {
+	switch runtime.GOOS {
+	case "windows":
+		return append(without(env, "AppData"), "AppData="+home)
+	case "darwin", "ios":
+		return append(without(env, "HOME"), "HOME="+home)
+	default:
+		return append(without(env, "XDG_CONFIG_HOME"), "XDG_CONFIG_HOME="+home)
+	}
+}
+
+func configurationFile(home string) string {
+	dir := home
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		dir = filepath.Join(home, "Library", "Application Support")
+	}
+	return filepath.Join(dir, "sweep", "config.toml")
 }
 
 func without(env []string, names ...string) []string {

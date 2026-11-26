@@ -1,6 +1,6 @@
 # Scan as JSON
 
-`sweep scan --json` prints the same Scan as one JSON document for scripts: `version` 1, the `roots`, the `candidates` with exact Size in bytes, each Candidate's Project path, Last used and Stale mark, and the paths that were `unreadable`. Every list is `[]` when empty, never `null`. A Size equals what `du -s` reports for the path, each hard-linked file counted once. `project` is the directory of the manifest beside the Candidate. `last_used` is UTC. `stale` is true when that time is more than 30 days before the Scan.
+`sweep scan --json` prints the same Scan as one JSON document for scripts: `version` 1, the `configuration` file or `""`, the `roots`, the `candidates` with exact Size in bytes, each Candidate's Project path, Last used and Stale mark, and the paths that were `unreadable`. Every list is `[]` when empty, never `null`. A Size equals what `du -s` reports for the path, each hard-linked file counted once. `project` is the directory of the manifest beside the Candidate. `last_used` is UTC. `stale` is true when that time is more than 30 days before the Scan.
 
 ## Sub-features
 
