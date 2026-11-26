@@ -26,6 +26,8 @@ const (
 	recycleVersion = 2
 	shcneCreate    = 0x00000002
 	shcneDelete    = 0x00000004
+	shcneMkDir     = 0x00000008
+	shcneRmDir     = 0x00000010
 	shcneUpdateDir = 0x00001000
 	shcnfPathW     = 0x0005
 )
@@ -76,7 +78,7 @@ func recycleMove(root, path string) error {
 	// The index file is one this move created. The Candidate keeps the
 	// attributes it had.
 	hideInfo(iPath)
-	notify(shcneDelete, abs)
+	notifyRemoved(abs, info.IsDir())
 	notify(shcneUpdateDir, bin)
 	return nil
 }
@@ -100,6 +102,10 @@ func recycleRestore(root, path string) error {
 		return err
 	}
 	src := filepath.Join(bin, "$R"+suffix)
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
 	if err := renameBetween(src, "", true, abs, root, false); err != nil {
 		return err
 	}
@@ -109,7 +115,7 @@ func recycleRestore(root, path string) error {
 	if err := os.Remove(filepath.Join(bin, "$I"+suffix)); err != nil {
 		return err
 	}
-	notify(shcneCreate, abs)
+	notifyRestored(abs, srcInfo.IsDir())
 	notify(shcneUpdateDir, bin)
 	return nil
 }
@@ -371,6 +377,28 @@ func setAttributes(path string, attr uint32) error {
 
 func hideInfo(path string) {
 	_ = setAttributes(path, syscall.FILE_ATTRIBUTE_HIDDEN)
+}
+
+// notifyRemoved tells the shell that path left its parent. A directory
+// uses the directory event. The parent is refreshed so a folder does not
+// stay on screen after a Clean.
+func notifyRemoved(path string, dir bool) {
+	event := uintptr(shcneDelete)
+	if dir {
+		event = shcneRmDir
+	}
+	notify(event, path)
+	notify(shcneUpdateDir, filepath.Dir(path))
+}
+
+// notifyRestored tells the shell that path is back in its parent.
+func notifyRestored(path string, dir bool) {
+	event := uintptr(shcneCreate)
+	if dir {
+		event = shcneMkDir
+	}
+	notify(event, path)
+	notify(shcneUpdateDir, filepath.Dir(path))
 }
 
 func notify(event uintptr, path string) {
