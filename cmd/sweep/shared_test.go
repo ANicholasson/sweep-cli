@@ -277,7 +277,7 @@ func TestAScanRunsWhenTheHomeDirectoryIsUnknown(t *testing.T) {
 	}
 	configHome := t.TempDir()
 	cmd := exec.Command(b.sweep, "scan", "--json", top)
-	env := without(os.Environ(), "HOME", "USERPROFILE")
+	env := without(os.Environ(), "HOME", "USERPROFILE", "UserProfile", "HOMEDRIVE", "HomeDrive", "HOMEPATH", "HomePath")
 	env = append(env, "XDG_CONFIG_HOME="+configHome, "XDG_CACHE_HOME="+t.TempDir(), "XDG_DATA_HOME="+t.TempDir())
 	if runtime.GOOS == "windows" {
 		env = windowsConfigEnv(env, configHome)
