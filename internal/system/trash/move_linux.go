@@ -64,7 +64,8 @@ func (m Mover) Move(path string) error {
 		return err
 	}
 	dest := filepath.Join(m.dir, "files", name)
-	if err := renameNoFollow(abs, dest); err != nil {
+	// The Candidate is not followed. The trash may sit behind a Link.
+	if err := renameBetween(abs, false, dest, true); err != nil {
 		_ = os.Remove(infoPath)
 		return err
 	}
@@ -92,7 +93,8 @@ func (m Mover) Restore(path string) error {
 		return err
 	}
 	src := filepath.Join(m.dir, "files", name)
-	if err := renameNoFollow(src, abs); err != nil {
+	// The trash may sit behind a Link. The Candidate's own path is not followed.
+	if err := renameBetween(src, true, abs, false); err != nil {
 		return err
 	}
 	if err := os.Remove(infoPath); err != nil {
@@ -230,16 +232,17 @@ func unescape(s string) (string, error) {
 	return b.String(), nil
 }
 
-// renameNoFollow renames oldpath to newpath. A Link in either path is an
-// error, and neither path is followed. The last component is renamed as
-// itself, so a Link there is moved and not what it leads to.
-func renameNoFollow(oldpath, newpath string) error {
-	oldfd, err := openDirNoFollow(filepath.Dir(oldpath))
+// renameBetween renames oldpath to newpath. followOld and followNew say
+// whether a Link in that path, above the last component, may be followed.
+// The Candidate is never followed. The trash may be, because that is where
+// the file is going. The last component is renamed as itself.
+func renameBetween(oldpath string, followOld bool, newpath string, followNew bool) error {
+	oldfd, err := openParent(oldpath, followOld)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = syscall.Close(oldfd) }()
-	newfd, err := openDirNoFollow(filepath.Dir(newpath))
+	newfd, err := openParent(newpath, followNew)
 	if err != nil {
 		return err
 	}
@@ -248,6 +251,42 @@ func renameNoFollow(oldpath, newpath string) error {
 		return &os.PathError{Op: "move", Path: oldpath, Err: err}
 	}
 	return nil
+}
+
+func openParent(path string, follow bool) (int, error) {
+	dir := filepath.Dir(path)
+	if follow {
+		return openDirFollow(dir)
+	}
+	return openDirNoFollow(dir)
+}
+
+// openDirFollow opens path and follows a Link on the way. It is used for
+// the trash directory only.
+func openDirFollow(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return -1, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return -1, err
+	}
+	if !info.IsDir() {
+		_ = f.Close()
+		return -1, &os.PathError{Op: "open", Path: path, Err: errors.New("not a directory")}
+	}
+	fd, err := syscall.Dup(int(f.Fd()))
+	cerr := f.Close()
+	if err != nil {
+		return -1, err
+	}
+	if cerr != nil {
+		_ = syscall.Close(fd)
+		return -1, cerr
+	}
+	return fd, nil
 }
 
 // openDirNoFollow opens path by opening each component with O_NOFOLLOW.

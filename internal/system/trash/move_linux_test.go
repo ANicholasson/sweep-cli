@@ -85,6 +85,43 @@ func TestAFailedMoveLeavesTheFile(t *testing.T) {
 	}
 }
 
+func TestALinkAboveTheTrashStillReceivesTheFile(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "keep.txt")
+	if err := os.WriteFile(src, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(link, "Trash")
+	err := In(home).Move(src)
+	if err != nil {
+		if strings.Contains(err.Error(), "not a directory") {
+			t.Fatalf("a Link above the trash was refused as not a directory: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if _, statErr := os.Lstat(src); !os.IsNotExist(statErr) {
+		t.Fatalf("the file is still at %s: %v", src, statErr)
+	}
+	if err := In(home).Restore(src); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep\n" {
+		t.Errorf("restored %q, want the original bytes", got)
+	}
+}
+
 func TestMoveDoesNotFollowALinkAboveTheFile(t *testing.T) {
 	dir := t.TempDir()
 	real := filepath.Join(dir, "real")
