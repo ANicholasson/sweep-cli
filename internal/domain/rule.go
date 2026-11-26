@@ -40,3 +40,9 @@ type where interface{ where() }
 
 func (InProject) where()     {}
 func (InSharedCache) where() {}
+
+// SharedCache reports whether the Rule finds a Shared cache.
+func (r Rule) SharedCache() bool {
+	_, ok := r.Where.(InSharedCache)
+	return ok
+}

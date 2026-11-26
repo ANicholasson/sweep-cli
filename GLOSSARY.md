@@ -76,7 +76,7 @@ The per-user file that sets default Roots, the Stale threshold and the Ignore li
 _Avoid_: settings, preferences, rc file
 
 **Pick**:
-Choosing a Candidate for a Plan. sweep picks every Stale Candidate beneath the Roots the user gave, and the user can pick or unpick any Candidate.
+Choosing a Candidate for a Plan. sweep picks every Stale Candidate beneath the Roots the user gave, and the user can pick or unpick any Candidate. For one dry run the Pick can be narrowed to Kinds or Ecosystems, the age that counts as Stale can be changed, and every Candidate can be picked whatever its age. None of those choices picks a Shared cache or Docker data.
 _Avoid_: select, mark, include
 
 **Clean**:

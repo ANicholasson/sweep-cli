@@ -17,3 +17,13 @@ var kinds = [...]Kind{Dependencies, BuildOutput, Cache, Models, Worktree}
 
 // String is the Kind's name as GLOSSARY.md writes it.
 func (k Kind) String() string { return k.name }
+
+// KindByName returns the Kind whose name is s, as GLOSSARY.md writes it.
+func KindByName(s string) (Kind, bool) {
+	for _, k := range kinds {
+		if k.name == s {
+			return k, true
+		}
+	}
+	return Kind{}, false
+}
