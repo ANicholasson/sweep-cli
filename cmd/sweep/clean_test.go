@@ -674,6 +674,38 @@ func TestACandidateThatHoldsAnIgnorePathIsLeftOutOfThePlan(t *testing.T) {
 	}
 }
 
+func TestAPlanInsideADroppedCandidateOrItsProjectIsRefused(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	b.config = filepath.Join(top, "config")
+	writeOldProject(t, top)
+	keep := filepath.Join(top, "app", "node_modules", "keep")
+	project := filepath.Join(top, "app")
+	candidate := filepath.Join(top, "app", "node_modules")
+	writeConfig(t, b.config, "ignore = ["+tomlPath(t, keep)+"]\n")
+
+	t.Run("the Project", func(t *testing.T) {
+		planPath := filepath.Join(project, "plan.json")
+		got := b.run(t, top, "clean", "--dry-run", "--plan", planPath, top)
+		if got.status != 2 || got.stdout != "" || !strings.Contains(got.stderr, planPath) || !strings.Contains(got.stderr, project) {
+			t.Fatalf("exit status %d, stdout %q, stderr %q, want 2 naming the Plan and the Project", got.status, got.stdout, got.stderr)
+		}
+		if _, err := os.Lstat(planPath); !os.IsNotExist(err) {
+			t.Errorf("wrote the Plan inside the Project: %v", err)
+		}
+	})
+	t.Run("the Candidate", func(t *testing.T) {
+		planPath := filepath.Join(candidate, "plan.json")
+		got := b.run(t, top, "clean", "--dry-run", "--plan", planPath, top)
+		if got.status != 2 || got.stdout != "" || !strings.Contains(got.stderr, candidate) {
+			t.Fatalf("exit status %d, stdout %q, stderr %q, want 2 naming the Candidate", got.status, got.stdout, got.stderr)
+		}
+		if _, err := os.Lstat(planPath); !os.IsNotExist(err) {
+			t.Errorf("wrote the Plan inside the Candidate: %v", err)
+		}
+	})
+}
+
 func TestAPlanInsideAnIgnorePathIsRefused(t *testing.T) {
 	b := build(t)
 	top := t.TempDir()

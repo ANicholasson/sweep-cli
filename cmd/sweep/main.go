@@ -119,7 +119,10 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		return misused
 	}
 	// A Candidate is taken whole, so one that holds an Ignore path cannot
-	// be in the Plan: a Clean would remove that path.
+	// be in the Plan: a Clean would remove that path. The location check
+	// still uses the Candidates the Scan found, so a Plan inside that
+	// Candidate or its Project is refused.
+	found := result.Candidates
 	result.Candidates = withoutHeldIgnore(result.Candidates, ignore)
 	var named []string
 	for _, p := range pick {
@@ -151,7 +154,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	// Refuse before creating a directory. A Plan inside a Project becomes
 	// that Project's newest file, and the next dry run then drops it.
-	if refusePlan(stderr, chosen, chosen, result.Candidates, ignore) {
+	if refusePlan(stderr, chosen, chosen, found, ignore) {
 		return misused
 	}
 	if *planPath == "" {
@@ -165,7 +168,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		say(stderr, err)
 		return misused
 	}
-	if refusePlan(stderr, chosen, real, result.Candidates, ignore) {
+	if refusePlan(stderr, chosen, real, found, ignore) {
 		return misused
 	}
 	data, err := plan.Marshal(built)
@@ -256,6 +259,7 @@ func refusePlan(stderr io.Writer, planPath, where string, candidates []domain.Ca
 // insideIgnore reports the Ignore path that contains where. where may be
 // the Ignore path itself. The spelling from the Configuration is what the
 // message names.
+//
 // withoutHeldIgnore drops a Candidate that holds an Ignore path. The
 // Candidate itself being the Ignore path is already absent from the Scan.
 func withoutHeldIgnore(candidates []domain.Candidate, ignore []string) []domain.Candidate {
