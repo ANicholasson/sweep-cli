@@ -63,6 +63,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_bots: "cursor[bot],cursor"
           claude_args: >-
+            --model claude-opus-5-5
+            --effort high
             --max-turns 120
             --allowedTools "Read,Grep,Glob,Write,Bash"
             --disallowedTools "WebFetch,WebSearch"
@@ -85,7 +87,7 @@ jobs:
             7. Try to break the change with cases that neither the tests nor the recipes cover. Compare with the same command on the base branch when a result looks wrong, to tell a regression from an old defect.
             8. Check that the tests take their expected values from outside sweep: du, git, a file listing, a time the test set. A test that compares sweep with sweep proves nothing.
             9. Check the layout in docs/adr: the domain does no IO, and only cmd/sweep imports an adapter.
-            10. Scan the diff, the title and the body for names of people or tools and for real machine paths. Leave commit authors and co-author lines out of this: they are removed when the pull request lands.
+            10. Scan the diff, the title and the body for names of people or tools and for real machine paths. Leave out what a tool added by itself: commit authors, co-author lines, and a tool's own summary or footer in the body. Those may stay.
 
             Then post exactly one comment with `gh pr comment ${{ github.event.pull_request.number }} --body-file <file>`:
             - First line: `Verdict: ready to land` or `Verdict: not ready`.

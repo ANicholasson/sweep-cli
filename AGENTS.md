@@ -11,8 +11,7 @@ sweep finds the disk space that developer tools leave behind and reclaims it saf
 - Keep every Safety rule: the Git rule, the Root rule and the Fingerprint rule. [README.md](README.md#safety-rules) states them and [GLOSSARY.md](GLOSSARY.md) defines them.
 - Run a Clean against the Fixture only. A Clean runs against a real directory only once trash by default works on all three operating systems and the formal check of the Fingerprint rule passes.
 - Make Fixture data only with the fixture tool. It is synthetic, and none of it comes from a real machine.
-- Write in project terms, because the repo is public. Code, docs, commit messages and pull request titles and bodies name no person, AI tool, skill or workflow, and no real machine path, user folder or project name. The one exception is a file a tool needs to find by path: it lives in that tool's own folder, as the verification skill lives in `.cursor/skills/verify-sweep/`. A workflow that runs a tool names it for the same reason.
-- Leave attribution and co-author trailers off commits and pull requests.
+- Write in project terms, because the repo is public. Code, docs, commit messages and pull request titles and bodies name no person, AI tool, skill or workflow, and no real machine path, user folder or project name. Two things are outside this rule. A file a tool needs to find by path lives in that tool's own folder, as the verification skill lives in `.cursor/skills/verify-sweep/`, and a workflow that runs a tool names it for the same reason. And what a tool adds by itself to a commit or a pull request, such as a co-author line, a summary or a footer, may stay: nobody has to remove it.
 - Deliver work as a branch and a pull request, and leave it unmerged. The maintainer merges.
 
 ## Code
