@@ -3,7 +3,6 @@
 package main_test
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
