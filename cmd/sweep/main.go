@@ -21,6 +21,7 @@ import (
 	"github.com/ANicholasson/sweep-cli/internal/system/docker"
 	"github.com/ANicholasson/sweep-cli/internal/system/files"
 	"github.com/ANicholasson/sweep-cli/internal/system/git"
+	"github.com/ANicholasson/sweep-cli/internal/system/trash"
 )
 
 const (
@@ -232,8 +233,8 @@ var errNotPlan = errors.New("exists and is not a Plan")
 
 // writePlan creates path, or replaces it when it is already a Plan. The
 // bytes are written and synced in a separate file first. path is replaced
-// only after that write finishes, so a failed write leaves an existing
-// Plan in place and does not create a file at path that is not a Plan.
+// only after that write finishes. The separate file is removed on every
+// failure, and left only after the rename has succeeded.
 func writePlan(path string, data []byte) error {
 	old, err := os.ReadFile(path)
 	if err == nil {
@@ -248,6 +249,12 @@ func writePlan(path string, data []byte) error {
 		return err
 	}
 	tmp := f.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			_ = trash.Drop(tmp)
+		}
+	}()
 	_, err = f.Write(data)
 	if err == nil {
 		err = f.Sync()
@@ -259,7 +266,11 @@ func writePlan(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	renamed = true
+	return nil
 }
 
 func say(stderr io.Writer, err error) {
