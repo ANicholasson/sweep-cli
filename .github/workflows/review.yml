@@ -3,8 +3,8 @@ name: review
 # An independent review of one pull request, by a reviewer that did not write
 # the code and runs on a different model from the one that did. It starts
 # when the pull request is given the label "review", so it is asked for once
-# the work is believed done and not on every push. To ask again after a fix,
-# remove the label and add it back.
+# the work is believed done. While the label stays, it runs again on every
+# push, so the newest verdict is always about the newest commit.
 #
 # It needs the secret CLAUDE_CODE_OAUTH_TOKEN. A pull request from a fork never
 # starts it.
@@ -15,22 +15,26 @@ name: review
 
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
 
 permissions:
   contents: read
 
 # The label is part of the group, so another label added while a review runs
-# starts in a group of its own and cannot cancel it.
+# starts in a group of its own and cannot cancel it. A push has no label and
+# joins the group of "review", so it replaces a review of an older commit.
 concurrency:
-  group: review-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  group: review-${{ github.event.pull_request.number }}-${{ github.event.label.name || 'review' }}
   cancel-in-progress: true
 
 jobs:
   review:
     if: >-
-      github.event.label.name == 'review' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        (github.event.action == 'labeled' && github.event.label.name == 'review') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'review'))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -52,7 +56,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          allowed_bots: "cursor[bot]"
+          allowed_bots: "cursor[bot],cursor"
           claude_args: >-
             --max-turns 120
             --allowedTools "Read,Grep,Glob,Write,Bash"
@@ -80,6 +84,7 @@ jobs:
 
             Then post exactly one comment with `gh pr comment ${{ github.event.pull_request.number }} --body-file <file>`:
             - First line: `Verdict: ready to land` or `Verdict: not ready`.
+            - Second line: `Reviewed commit: ${{ github.event.pull_request.head.sha }}`. A verdict speaks for that commit only.
             - Then blockers, each with the command that reproduces it and its output. Then smaller notes. Then the acceptance criteria as a table. Then what you could not verify and why.
             - At most 60 lines. Plain project terms from GLOSSARY.md. No greeting, no signature, and no name of a person or a tool.
             - Do not soften a finding, and do not pad a clean result.
