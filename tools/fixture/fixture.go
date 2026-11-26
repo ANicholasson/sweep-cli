@@ -90,6 +90,13 @@ var committed = []entry{
 	{"projects/recent-app/node_modules/fake-new/note.txt", file("new\n")},
 	{"projects/recent-app/node_modules/fake-new/note-again.txt", hardLink("projects/recent-app/node_modules/fake-new/note.txt")},
 
+	{"projects/shifted-app/package.json", manifest("shifted-app")},
+	{"projects/shifted-app/src/index.js", file("console.log(\"shifted\");\n")},
+	{"projects/shifted-app/node_modules/fake-shift/package.json", manifest("fake-shift")},
+	{"projects/shifted-app/node_modules/fake-shift/index.js", module("fake-shift")},
+	{"projects/shifted-app/node_modules/fake-shift/note.txt", file("shift\n")},
+	{"projects/shifted-app/node_modules/fake-shift/note-again.txt", hardLink("projects/shifted-app/node_modules/fake-shift/note.txt")},
+
 	{"projects/tracked-app/package.json", manifest("tracked-app")},
 	{"projects/tracked-app/node_modules/fake-gamma/package.json", manifest("fake-gamma")},
 	{"projects/tracked-app/node_modules/fake-gamma/index.js", module("fake-gamma")},
@@ -158,6 +165,7 @@ var key = answerKey{
 		{Path: "projects/web-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/stale-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/recent-app/node_modules", Kind: domain.Dependencies.String()},
+		{Path: "projects/shifted-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/tracked-app/ignored-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/tracked-app/untracked-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/rust-app/target", Kind: domain.BuildOutput.String()},
@@ -167,6 +175,7 @@ var key = answerKey{
 		{Path: "outside/stray-app/node_modules", Reason: "It is outside every Root, so the Root rule keeps it."},
 		{Path: "projects/linked-app/through/node_modules", Reason: "It is reached through a Link, so the Root rule keeps it."},
 		{Path: "projects/plain/target", Reason: "No Cargo.toml sits beside it, so it is not a Candidate."},
+		{Path: "projects/shifted-app/node_modules", Reason: "It is changed between the Plan and the Clean, so the Fingerprint rule keeps it."},
 	},
 }
 

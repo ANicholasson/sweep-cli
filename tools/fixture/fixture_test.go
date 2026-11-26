@@ -88,7 +88,7 @@ func matchesAnswerKey(t *testing.T, dir string) {
 		}
 	}
 
-	var outside, tracked, linked, bare int
+	var outside, tracked, linked, bare, changed int
 	for _, tr := range key.Traps {
 		if !isDir(dir, tr.Path) {
 			t.Errorf("Trap %s is not a directory in the Fixture", tr.Path)
@@ -103,6 +103,8 @@ func matchesAnswerKey(t *testing.T, dir string) {
 				outside++
 			case linkOnTheWay(dir, tr.Path):
 				linked++
+			case strings.Contains(tr.Reason, "Fingerprint rule"):
+				changed++
 			case len(trackedFiles(t, dir, tr.Path)) > 0:
 				tracked++
 			default:
@@ -127,6 +129,9 @@ func matchesAnswerKey(t *testing.T, dir string) {
 	}
 	if bare == 0 {
 		t.Error("no Trap is a directory named like a Candidate with no Manifest beside it")
+	}
+	if changed == 0 {
+		t.Error("no Trap is a Candidate the Fingerprint rule keeps once it has changed")
 	}
 }
 

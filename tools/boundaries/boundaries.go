@@ -24,7 +24,7 @@ var boundaries = []boundary{
 		name:  "only-trash-removes",
 		why:   "the trash adapter is the only package that trashes or deletes anything",
 		dir:   "internal/system/trash",
-		names: []string{"Remove", "RemoveAll", "Unlink", "Unlinkat", "Rmdir"},
+		names: []string{"Remove", "RemoveAll", "Rename", "Renameat", "Unlink", "Unlinkat", "Rmdir"},
 	},
 	importedOnlyBy{
 		name: "only-cmd-imports-adapters",

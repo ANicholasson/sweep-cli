@@ -172,7 +172,14 @@ func TestScanOfTheFixture(t *testing.T) {
 			t.Fatal("the Answer key has no Trap, so this shows nothing")
 		}
 		for _, trap := range key.Traps {
-			if listed(out, at(trap.Path)) != 0 {
+			n := listed(out, at(trap.Path))
+			if candidateToo(key, trap.Path) {
+				if n != 1 {
+					t.Errorf("the Candidate %s is also a Trap and is listed %d times, want once", trap.Path, n)
+				}
+				continue
+			}
+			if n != 0 {
 				t.Errorf("the Trap %s is listed", trap.Path)
 			}
 		}

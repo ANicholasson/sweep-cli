@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
+	"github.com/ANicholasson/sweep-cli/internal/domain/clean"
 	"github.com/ANicholasson/sweep-cli/internal/domain/ecosystems"
 	"github.com/ANicholasson/sweep-cli/internal/domain/plan"
 	"github.com/ANicholasson/sweep-cli/internal/domain/safety"
@@ -42,6 +43,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags.Usage = func() {
 		_, _ = fmt.Fprintln(stderr, "usage: sweep scan [--json] [Root...]")
 		_, _ = fmt.Fprintln(stderr, "       sweep clean --dry-run [--plan file] [--pick path] [Root...]")
+		_, _ = fmt.Fprintln(stderr, "       sweep clean --plan file")
 		_, _ = fmt.Fprintln(stderr, "       sweep --version")
 		flags.PrintDefaults()
 	}
@@ -99,6 +101,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
 		_, _ = fmt.Fprintln(stderr, "usage: sweep clean --dry-run [--plan file] [--pick path] [Root...]")
+		_, _ = fmt.Fprintln(stderr, "       sweep clean --plan file")
 		flags.PrintDefaults()
 	}
 	dry := flags.Bool("dry-run", false, "write a Plan and remove nothing")
@@ -110,8 +113,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		return misused
 	}
 	if !*dry {
-		flags.Usage()
-		return misused
+		return actOnPlan(*planPath, pick, given, stdout, stderr)
 	}
 	result, ignore, err := scanTree(given)
 	if err != nil {
@@ -188,6 +190,44 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		return incomplete
 	}
 	if len(result.Unreadable) > 0 {
+		return incomplete
+	}
+	return done
+}
+
+// actOnPlan carries out the Plan at planPath. It removes nothing until the
+// Plan has been read and the trash can take a Candidate. A Candidate the
+// trash cannot take stays where it was.
+func actOnPlan(planPath string, pick repeated, given []string, stdout, stderr io.Writer) int {
+	if planPath == "" || len(pick) > 0 || len(given) > 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: sweep clean --dry-run [--plan file] [--pick path] [Root...]")
+		_, _ = fmt.Fprintln(stderr, "       sweep clean --plan file")
+		return misused
+	}
+	data, err := os.ReadFile(planPath)
+	if err != nil {
+		say(stderr, err)
+		return incomplete
+	}
+	parsed, err := plan.Unmarshal(data)
+	if err != nil {
+		say(stderr, err)
+		return misused
+	}
+	mover, err := trash.Open()
+	if err != nil {
+		say(stderr, err)
+		if errors.Is(err, trash.ErrUnavailable) {
+			return misused
+		}
+		return incomplete
+	}
+	result := clean.Run(files.Disk{}, git.Local{}, mover, parsed)
+	if err := report.Clean(stdout, result); err != nil {
+		say(stderr, err)
+		return incomplete
+	}
+	if len(result.Skipped) > 0 || len(result.Failed) > 0 {
 		return incomplete
 	}
 	return done
@@ -453,7 +493,7 @@ func writePlan(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := trash.Place(tmp, path); err != nil {
 		return err
 	}
 	renamed = true

@@ -2,6 +2,12 @@ package safety
 
 import "strings"
 
+// Split is the volume and the parts Beneath compares. ok is false when p
+// is not an absolute path Beneath can judge.
+func Split(p string) (volume string, parts []string, ok bool) {
+	return parse(p)
+}
+
 // Beneath reports whether path is beneath root and no Link lies on the way.
 // link is true when a Link was crossed to reach path, and then the answer is
 // no even when the text of path sits under root.
