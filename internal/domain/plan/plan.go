@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
@@ -205,15 +206,28 @@ type identityV1 struct {
 	File   uint64 `json:"file"`
 }
 
-// Is reports whether data is a version 1 Plan and nothing else.
+// Is reports whether data is a version 1 Plan and nothing else. One JSON
+// value must end the file.
 func Is(data []byte) bool {
+	raw, err := decodePlan(data)
+	return err == nil && raw.Version == 1
+}
+
+// decodePlan reads one JSON value and requires the file to end there.
+// Decoder.More only looks for another element inside the value just read,
+// so a Plan followed by "}garbage" would pass that check.
+func decodePlan(data []byte) (planV1, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var out planV1
-	if err := dec.Decode(&out); err != nil || out.Version != 1 || dec.More() {
-		return false
+	var raw planV1
+	if err := dec.Decode(&raw); err != nil {
+		return planV1{}, err
 	}
-	return true
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return planV1{}, errors.New("the Plan is malformed")
+	}
+	return raw, nil
 }
 
 // Marshal writes a Plan as version 1 JSON. The bytes end with a newline.
@@ -245,10 +259,8 @@ func Marshal(p Plan) ([]byte, error) {
 // Unmarshal reads a version 1 Plan. A malformed Plan, a Plan with a field
 // this version does not have, or a Plan of another version is refused.
 func Unmarshal(data []byte) (Plan, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	var raw planV1
-	if err := dec.Decode(&raw); err != nil || dec.More() {
+	raw, err := decodePlan(data)
+	if err != nil {
 		return Plan{}, errors.New("the Plan is malformed")
 	}
 	if raw.Version != 1 {

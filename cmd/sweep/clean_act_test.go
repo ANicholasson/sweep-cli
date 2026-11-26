@@ -242,6 +242,7 @@ func TestCleanRefusesAMalformedPlan(t *testing.T) {
 		"{\"version\":2,\"roots\":[],\"candidates\":[]}\n",
 		"{\"version\":1,\"roots\":[],\"candidates\":[],\"extra\":true}\n",
 		"not a plan\n",
+		"{\"version\":1,\"roots\":[],\"candidates\":[]}garbage\n",
 	} {
 		planPath := filepath.Join(t.TempDir(), "plan.json")
 		if err := os.WriteFile(planPath, []byte(body), 0o644); err != nil {
@@ -253,6 +254,9 @@ func TestCleanRefusesAMalformedPlan(t *testing.T) {
 		}
 		if !strings.Contains(got.stderr, "malformed") && !strings.Contains(got.stderr, "version") {
 			t.Errorf("stderr = %q, want the Plan refused", got.stderr)
+		}
+		if strings.Contains(body, "garbage") && !strings.Contains(got.stderr, "malformed") {
+			t.Errorf("stderr = %q, want a Plan with trailing text refused as malformed", got.stderr)
 		}
 	}
 	for _, d := range differences(before, listing(t, dir)) {
