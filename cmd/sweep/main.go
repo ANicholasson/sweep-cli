@@ -16,6 +16,7 @@ import (
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/ecosystems"
 	"github.com/ANicholasson/sweep-cli/internal/domain/plan"
+	"github.com/ANicholasson/sweep-cli/internal/domain/safety"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 	"github.com/ANicholasson/sweep-cli/internal/report"
 	"github.com/ANicholasson/sweep-cli/internal/system/config"
@@ -73,7 +74,7 @@ func scanCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return misused
 	}
-	result, err := scanTree(given)
+	result, _, err := scanTree(given)
 	if err != nil {
 		say(stderr, err)
 		return misused
@@ -112,11 +113,14 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		flags.Usage()
 		return misused
 	}
-	result, err := scanTree(given)
+	result, ignore, err := scanTree(given)
 	if err != nil {
 		say(stderr, err)
 		return misused
 	}
+	// A Candidate is taken whole, so one that holds an Ignore path cannot
+	// be in the Plan: a Clean would remove that path.
+	result.Candidates = withoutHeldIgnore(result.Candidates, ignore)
 	var named []string
 	for _, p := range pick {
 		resolved, err := files.Resolve(p)
@@ -147,7 +151,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	// Refuse before creating a directory. A Plan inside a Project becomes
 	// that Project's newest file, and the next dry run then drops it.
-	if refusePlan(stderr, chosen, chosen, result.Candidates) {
+	if refusePlan(stderr, chosen, chosen, result.Candidates, ignore) {
 		return misused
 	}
 	if *planPath == "" {
@@ -161,7 +165,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		say(stderr, err)
 		return misused
 	}
-	if refusePlan(stderr, chosen, real, result.Candidates) {
+	if refusePlan(stderr, chosen, real, result.Candidates, ignore) {
 		return misused
 	}
 	data, err := plan.Marshal(built)
@@ -229,11 +233,15 @@ func defaultPlanPath() (string, error) {
 	return filepath.Join(dir, "sweep", "plan.json"), nil
 }
 
-// refusePlan reports whether planPath would land inside a Candidate or a
-// Project and prints the usage error. where is the path to judge, after a
-// Link on the way has been followed when it can be. planPath is the path
-// named in the message.
-func refusePlan(stderr io.Writer, planPath, where string, candidates []domain.Candidate) bool {
+// refusePlan reports whether planPath would land inside an Ignore path, a
+// Candidate or a Project and prints the usage error. where is the path to
+// judge, after a Link on the way has been followed when it can be.
+// planPath is the path named in the message.
+func refusePlan(stderr io.Writer, planPath, where string, candidates []domain.Candidate, ignore []string) bool {
+	if p, ok := insideIgnore(where, ignore); ok {
+		say(stderr, fmt.Errorf("the Plan %s would be written inside the Ignore path %s", planPath, p))
+		return true
+	}
 	if c, ok := insideCandidate(where, candidates); ok {
 		say(stderr, fmt.Errorf("the Plan would be written inside the Candidate %s", c))
 		return true
@@ -243,6 +251,69 @@ func refusePlan(stderr io.Writer, planPath, where string, candidates []domain.Ca
 		return true
 	}
 	return false
+}
+
+// insideIgnore reports the Ignore path that contains where. where may be
+// the Ignore path itself. The spelling from the Configuration is what the
+// message names.
+// withoutHeldIgnore drops a Candidate that holds an Ignore path. The
+// Candidate itself being the Ignore path is already absent from the Scan.
+func withoutHeldIgnore(candidates []domain.Candidate, ignore []string) []domain.Candidate {
+	if len(ignore) == 0 {
+		return candidates
+	}
+	kept := make([]domain.Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if !holdsIgnore(c.Path, ignore) {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
+
+func holdsIgnore(path string, ignore []string) bool {
+	for _, p := range ignore {
+		if p != path && ignoreCovers(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func insideIgnore(where string, ignore []string) (string, bool) {
+	if len(ignore) == 0 {
+		return "", false
+	}
+	landedWhere, err := landed(where)
+	if err != nil {
+		return "", false
+	}
+	for _, p := range ignore {
+		if ignoreCovers(p, landedWhere) {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+func ignoreCovers(root, path string) bool {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	abs = filepath.Clean(abs)
+	if safety.Beneath(abs, path, false) {
+		return true
+	}
+	formed, err := (files.Disk{}).EachLink(abs)
+	if err != nil {
+		return false
+	}
+	target := path
+	if full, err := (files.Disk{}).EachLink(path); err == nil {
+		target = full
+	}
+	return safety.Beneath(formed, target, false)
 }
 
 func insideCandidate(dest string, candidates []domain.Candidate) (string, bool) {
@@ -403,28 +474,28 @@ func (r *repeated) Set(s string) error {
 // directory when the Configuration names none. The Stale threshold and the
 // Ignore list come from the Configuration. The Result names the file that
 // was read.
-func scanTree(given []string) (scan.Result, error) {
+func scanTree(given []string) (scan.Result, []string, error) {
 	cfg, err := configuration()
 	if err != nil {
-		return scan.Result{}, err
+		return scan.Result{}, nil, err
 	}
 	if len(given) == 0 {
 		given = cfg.Roots
 	}
 	roots, err := rootsOf(given)
 	if err != nil {
-		return scan.Result{}, err
+		return scan.Result{}, nil, err
 	}
 	ignore, err := resolveIgnore(cfg.Ignore)
 	if err != nil {
-		return scan.Result{}, err
+		return scan.Result{}, nil, err
 	}
 	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), scan.Settings{
 		StaleAfter: cfg.StaleAfter,
 		Ignore:     ignore,
 	})
 	result.Configuration = cfg.Path
-	return result, nil
+	return result, ignore, nil
 }
 
 func configuration() (domain.Configuration, error) {

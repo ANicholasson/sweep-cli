@@ -630,6 +630,106 @@ func TestDryRunReadsTheConfiguration(t *testing.T) {
 	})
 }
 
+func TestACandidateThatHoldsAnIgnorePathIsLeftOutOfThePlan(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	b.config = filepath.Join(top, "config")
+	writeOldProject(t, top)
+	keep := filepath.Join(top, "app", "node_modules", "keep")
+	candidate := filepath.Join(top, "app", "node_modules")
+	other := filepath.Join(top, "other", "node_modules")
+	writeConfig(t, b.config, "ignore = ["+tomlPath(t, keep)+"]\n")
+
+	planPath := filepath.Join(t.TempDir(), "plan.json")
+	got := b.run(t, top, "clean", "--dry-run", "--plan", planPath, top)
+	if got.status != 0 || got.stderr != "" {
+		t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+	}
+	out := decodePlan(t, planPath)
+	if planHolds(t, out, candidate) {
+		t.Errorf("the Plan holds %s, which holds an Ignore path", candidate)
+	}
+	if strings.Contains(got.stdout, candidate) {
+		t.Errorf("stdout names %s, which holds an Ignore path", candidate)
+	}
+	if !planHolds(t, out, other) {
+		t.Errorf("the Plan leaves out %s", other)
+	}
+	for _, c := range out.Candidates {
+		if c.Fingerprint.Size != du(t, c.Path) {
+			t.Errorf("%s: Fingerprint Size = %d, and du -s gives %d", c.Path, c.Fingerprint.Size, du(t, c.Path))
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(keep, "precious.txt")); err != nil {
+		t.Errorf("the ignored file is gone: %v", err)
+	}
+
+	picked := filepath.Join(t.TempDir(), "picked.json")
+	got = b.run(t, top, "clean", "--dry-run", "--plan", picked, "--pick", candidate, top)
+	if got.status != 2 || got.stdout != "" || !strings.Contains(got.stderr, candidate) {
+		t.Fatalf("exit status %d, stdout %q, stderr %q, want 2 naming %s", got.status, got.stdout, got.stderr, candidate)
+	}
+	if _, err := os.Lstat(picked); !os.IsNotExist(err) {
+		t.Errorf("wrote a Plan for a Candidate that holds an Ignore path: %v", err)
+	}
+}
+
+func TestAPlanInsideAnIgnorePathIsRefused(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	b.config = filepath.Join(top, "config")
+	writeOldProject(t, top)
+
+	t.Run("an ignored Project", func(t *testing.T) {
+		project := filepath.Join(top, "app")
+		writeConfig(t, b.config, "ignore = ["+tomlPath(t, project)+"]\n")
+		planPath := filepath.Join(project, "plan.json")
+		got := b.run(t, top, "clean", "--dry-run", "--plan", planPath, top)
+		if got.status != 2 || got.stdout != "" || !strings.Contains(got.stderr, planPath) || !strings.Contains(got.stderr, project) {
+			t.Fatalf("exit status %d, stdout %q, stderr %q, want 2 naming the Plan and the Project", got.status, got.stdout, got.stderr)
+		}
+		if _, err := os.Lstat(planPath); !os.IsNotExist(err) {
+			t.Errorf("wrote the Plan inside the ignored Project: %v", err)
+		}
+	})
+
+	t.Run("an ignored Candidate", func(t *testing.T) {
+		candidate := filepath.Join(top, "other", "node_modules")
+		writeConfig(t, b.config, "ignore = ["+tomlPath(t, candidate)+"]\n")
+		planPath := filepath.Join(candidate, "plan.json")
+		got := b.run(t, top, "clean", "--dry-run", "--plan", planPath, top)
+		if got.status != 2 || got.stdout != "" || !strings.Contains(got.stderr, planPath) || !strings.Contains(got.stderr, candidate) {
+			t.Fatalf("exit status %d, stdout %q, stderr %q, want 2 naming the Plan and the Candidate", got.status, got.stdout, got.stderr)
+		}
+		if _, err := os.Lstat(planPath); !os.IsNotExist(err) {
+			t.Errorf("wrote the Plan inside the ignored Candidate: %v", err)
+		}
+	})
+}
+
+func writeOldProject(t *testing.T, top string) {
+	t.Helper()
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, rel := range []string{
+		"app/package.json",
+		"app/src/a.js",
+		"app/node_modules/keep/precious.txt",
+		"other/package.json",
+		"other/node_modules/a.js",
+	} {
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestDryRunWritesNoPlanWhenAPickedCandidateCannotBeRead(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("only an account that is not root can be refused a directory by its mode")
