@@ -12,6 +12,11 @@ name: review
 # The reviewer works with this job's own token, not a token of its GitHub App,
 # so the permissions below are what it can do: read the code and write to a
 # pull request's conversation. It cannot push, and it cannot merge.
+#
+# A second job records the verdict as the status "verdict" on the commit that
+# was reviewed. A commit that was never reviewed has no such status, so a
+# branch rule that requires it holds a pull request back until its newest
+# commit has a verdict that says ready to land.
 
 on:
   pull_request:
@@ -88,3 +93,53 @@ jobs:
             - Then blockers, each with the command that reproduces it and its output. Then smaller notes. Then the acceptance criteria as a table. Then what you could not verify and why.
             - At most 60 lines. Plain project terms from GLOSSARY.md. No greeting, no signature, and no name of a person or a tool.
             - Do not soften a finding, and do not pad a clean result.
+
+  # The reviewer writes the verdict as a comment and this job turns it into a
+  # status, so the reviewer itself never holds the right to set one. The status
+  # is a name of its own, not this job's result, because a job that is skipped
+  # counts as passed and a missing status does not.
+  record-verdict:
+    needs: review
+    if: ${{ !cancelled() && needs.review.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Record the verdict for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # The newest verdict comment: its address, its first line, its second line.
+          newest=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '
+            .[]
+            | select(.user.login == "github-actions[bot]")
+            | select(.body | startswith("Verdict:"))
+            | (.body | split("\n") | map(rtrimstr("\r"))) as $lines
+            | [.html_url, $lines[0], ($lines[1] // "")]
+            | @tsv' | tail -n 1)
+          url=$(printf '%s' "$newest" | cut -f1)
+          verdict=$(printf '%s' "$newest" | cut -f2)
+          commit=$(printf '%s' "$newest" | cut -f3)
+
+          state=failure
+          if [ "$commit" != "Reviewed commit: $HEAD" ]; then
+            description="The review posted no verdict for this commit"
+            url="$RUN_URL"
+          elif [ "$verdict" = "Verdict: ready to land" ]; then
+            state=success
+            description="Ready to land"
+          else
+            description="Not ready: the verdict names what blocks it"
+          fi
+
+          gh api --method POST "repos/$REPO/statuses/$HEAD" \
+            -f state="$state" -f context=verdict \
+            -f description="$description" -f target_url="$url" --jq .state
