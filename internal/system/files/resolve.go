@@ -23,6 +23,16 @@ func Resolve(path string) (string, error) {
 	return resolve(abs, 0)
 }
 
+// ResolveDir returns path as an absolute path with every Link on the way
+// followed, including one that is not the last component. path must exist.
+func ResolveDir(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return resolveDir(abs, 0)
+}
+
 func resolve(path string, hops int) (string, error) {
 	if hops > 255 {
 		return "", fmt.Errorf("%s has too many Links", path)

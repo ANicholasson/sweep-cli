@@ -111,7 +111,7 @@ The exact list of Candidates one Clean will act on, written before anything is t
 _Avoid_: manifest, selection, queue
 
 **Fingerprint**:
-What sweep recorded about a Candidate when the Plan was written, compared again just before the Candidate is trashed or deleted.
+What sweep recorded about a Candidate when the Plan was written, compared again just before the Candidate is trashed or deleted. It is the file identity of the Candidate path, the number of directory entries inside it, its Size and its newest modification. A Link counts as one entry and is not followed.
 _Avoid_: snapshot, checksum, hash
 
 **Skip**:
