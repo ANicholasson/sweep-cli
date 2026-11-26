@@ -17,6 +17,13 @@ type Disk struct{}
 
 var _ scan.Files = Disk{}
 
+// EachLink returns path with every Link followed, including one earlier
+// than the last component. The Scan uses it so an Ignore path and a walked
+// path are compared in the same form. A missing path returns the error.
+func (Disk) EachLink(path string) (string, error) {
+	return ResolveDir(path)
+}
+
 // List reads one directory without following a Link at the end of dir, so a
 // directory swapped for a Link while a Scan runs is not followed. Names come
 // back in order, and each one's type comes from the directory read itself.

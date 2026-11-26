@@ -245,3 +245,48 @@ func TestAZeroDockerDataSizeIsReported(t *testing.T) {
 		t.Errorf("dockerData = %+v, want size 0 marked reported only", doc.DockerData)
 	}
 }
+
+func TestTheReportNamesTheConfigurationFile(t *testing.T) {
+	result := scan.Result{Roots: []domain.Root{"/work"}, Configuration: "/config/sweep/config.toml"}
+
+	var table strings.Builder
+	if err := report.Scan(&table, result, report.Table); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table.String(), "Configuration\n  /config/sweep/config.toml\n") {
+		t.Errorf("the table is\n%s\nwant the file that was read", table.String())
+	}
+
+	result.Configuration = ""
+	table.Reset()
+	if err := report.Scan(&table, result, report.Table); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table.String(), "Configuration\n  none\n") {
+		t.Errorf("the table is\n%s\nwant none when no file was read", table.String())
+	}
+
+	var out strings.Builder
+	result.Configuration = "/config/sweep/config.toml"
+	if err := report.Scan(&out, result, report.JSON); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Configuration string
+	}
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Configuration != result.Configuration {
+		t.Errorf("configuration = %q, want %s", got.Configuration, result.Configuration)
+	}
+
+	out.Reset()
+	result.Configuration = ""
+	if err := report.Scan(&out, result, report.JSON); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"configuration": ""`) {
+		t.Errorf("JSON is\n%s\nwant an empty configuration", out.String())
+	}
+}

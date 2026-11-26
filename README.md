@@ -10,22 +10,44 @@ Status: early development.
 
     sweep scan [--json] [Root...]
 
-A Scan looks beneath each Root, or beneath the current directory when you
-give none, and lists every Candidate a Rule recognises, such as a
-`node_modules` beside a `package.json`, with its Size, Kind, path and
-Reason. A Root that is a Link is resolved once, and a Link beneath a Root
-is not followed. It groups Candidates by Project. Last used is the newest
-modification among that Project's own files, outside its Candidates, and
-never an access time. A Candidate last used more than 30 days ago is
-marked Stale. A Candidate with no Project takes the newest modification
-inside it. The Scan leaves out a path that holds a file git tracks, and a
-path when git is missing or cannot answer. A path outside a work tree is
-still listed, and so is a path inside one that holds nothing git tracks.
-It prints the Roots it used, and it changes nothing. `--json` prints the
-same as one JSON document with a `version` field, and each Candidate
-carries its Project's path, `last_used` and `stale`. A Size is in bytes in
-the JSON, and it is what `du -s` reports for the path, with each
-hard-linked file counted once.
+A Scan looks beneath each Root. Roots come from the command line first,
+then the configuration file, then the current directory. It lists every
+Candidate a Rule recognises, such as a `node_modules` beside a
+`package.json`, with its Size, Kind, path and Reason. A Root that is a
+Link is resolved once, and a Link beneath a Root is not followed. It
+groups Candidates by Project. Last used is the newest modification among
+that Project's own files, outside its Candidates, and never an access
+time. A Candidate last used more than 30 days ago is marked Stale, unless
+the configuration file sets another threshold. A Candidate with no Project
+takes the newest modification inside it. The Scan leaves out a path that
+holds a file git tracks, and a path when git is missing or cannot answer.
+A path outside a work tree is still listed, and so is a path inside one
+that holds nothing git tracks. It leaves out a path on the Ignore list,
+and everything beneath it, from the report. Last used still counts the
+files there, so an Ignore does not by itself make a Candidate Stale. It prints the configuration file it read, or
+`none`, and the Roots it used, and it changes nothing. `--json` prints the
+same as one JSON document with a `version` field and a `configuration`
+field, and each Candidate carries its Project's path, `last_used` and
+`stale`. A Size is in bytes in the JSON, and it is what `du -s` reports
+for the path, with each hard-linked file counted once.
+
+The configuration file is `config.toml` in the `sweep` directory of the
+operating system's per-user configuration directory: `$XDG_CONFIG_HOME` or
+`~/.config` on Linux, `~/Library/Application Support` on macOS, and
+`%AppData%` on Windows. A missing file means the defaults. The format is
+TOML and the only keys are these:
+
+    roots = ["/path/to/projects"]
+    stale_days = 30
+    ignore = ["/path/to/keep"]
+
+`roots` and `ignore` are absolute paths. A Link in an Ignore path is
+followed, including one earlier than the last component. `stale_days` is a whole number of
+days and replaces the 30-day threshold, and zero means a Candidate is
+Stale when its Last used is before now. A malformed file is an error that
+names the file. An unknown key or a bad value is an error that names the
+key, and nothing is scanned. No key can switch off a Safety rule or make
+Delete the default.
 
 A Scan also prints one line of Docker data: the space Docker images and
 build cache hold, marked `reported only`. It is not a Candidate, it is

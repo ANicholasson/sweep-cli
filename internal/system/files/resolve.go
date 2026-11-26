@@ -25,6 +25,8 @@ func Resolve(path string) (string, error) {
 
 // ResolveDir returns path as an absolute path with every Link on the way
 // followed, including one that is not the last component. path must exist.
+// Resolve follows only a Link at the end and keeps an earlier Link in the
+// caller's spelling.
 func ResolveDir(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {

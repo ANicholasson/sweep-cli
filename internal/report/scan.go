@@ -23,12 +23,15 @@ var (
 	JSON = Format{"json"}
 )
 
-// Scan writes everything a Scan found: the Roots it used, each Candidate
-// grouped by Project with its path, Size, Kind, Last used, Stale mark and
-// Reason, Docker data on a line of its own, and every path it could not
-// read.
+// Scan writes everything a Scan found: the configuration file it read, the
+// Roots it used, each Candidate grouped by Project with its path, Size,
+// Kind, Last used, Stale mark and Reason, Docker data on a line of its own,
+// and every path it could not read.
 //
 // The Table:
+//
+//	Configuration
+//	  /config/sweep/config.toml
 //
 //	Roots
 //	  /work/projects
@@ -46,7 +49,8 @@ var (
 // no Project is grouped under "(no Project)". Docker data is never a row of
 // that table. When it could not be read the line names why, such as
 // "Docker data  docker is not running", and it has no size. The last section
-// is there only when something was not read.
+// is there only when something was not read. With no configuration file the
+// first section says none.
 func Scan(w io.Writer, result scan.Result, format Format) error {
 	var out bytes.Buffer
 	if format == JSON {
@@ -63,6 +67,12 @@ func Scan(w io.Writer, result scan.Result, format Format) error {
 }
 
 func table(out *bytes.Buffer, result scan.Result) {
+	out.WriteString("Configuration\n")
+	file := result.Configuration
+	if file == "" {
+		file = "none"
+	}
+	fmt.Fprintf(out, "  %s\n\n", file)
 	out.WriteString("Roots\n")
 	for _, root := range result.Roots {
 		fmt.Fprintf(out, "  %s\n", root)
@@ -118,16 +128,18 @@ func writeDocker(out *bytes.Buffer, data domain.DockerData) {
 // its version.
 //
 // Every list is written as [] when it is empty, never null. Size is in
-// bytes. Kind is the Kind's name as GLOSSARY.md writes it. project is the
+// bytes. Kind is the Kind's name as GLOSSARY.md writes it. configuration
+// is the file that was read, or "" when there was none. project is the
 // Project's path, or "" when the Candidate has none. last_used is UTC.
 // stale is true when the Scan marked the Candidate Stale. dockerData is
 // Docker data, never an entry of candidates.
 type scanV1 struct {
-	Version    int            `json:"version"`
-	Roots      []string       `json:"roots"`
-	Candidates []candidateV1  `json:"candidates"`
-	Unreadable []unreadableV1 `json:"unreadable"`
-	DockerData dockerV1       `json:"dockerData"`
+	Version       int            `json:"version"`
+	Configuration string         `json:"configuration"`
+	Roots         []string       `json:"roots"`
+	Candidates    []candidateV1  `json:"candidates"`
+	Unreadable    []unreadableV1 `json:"unreadable"`
+	DockerData    dockerV1       `json:"dockerData"`
 }
 
 // dockerV1 is Docker data. size is set only when it was read, in bytes,
@@ -154,7 +166,7 @@ type unreadableV1 struct {
 }
 
 func toV1(result scan.Result) scanV1 {
-	out := scanV1{Version: 1, Roots: []string{}, Candidates: []candidateV1{}, Unreadable: []unreadableV1{}}
+	out := scanV1{Version: 1, Configuration: result.Configuration, Roots: []string{}, Candidates: []candidateV1{}, Unreadable: []unreadableV1{}}
 	for _, root := range result.Roots {
 		out.Roots = append(out.Roots, string(root))
 	}

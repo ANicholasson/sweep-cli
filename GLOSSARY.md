@@ -71,6 +71,10 @@ _Avoid_: search, analyse, sweep (as a verb)
 Leaving a path out of every Scan because the user said so. Unlike a Skip, it is the user's choice, made before anything is found.
 _Avoid_: exclude, hide
 
+**Configuration**:
+The per-user file that sets default Roots, the Stale threshold and the Ignore list. A missing file means the defaults. It cannot switch off a Safety rule or make Delete the default.
+_Avoid_: settings, preferences, rc file
+
 **Pick**:
 Choosing a Candidate for a Plan. sweep picks every Stale Candidate beneath the Roots the user gave, and the user can pick or unpick any Candidate.
 _Avoid_: select, mark, include

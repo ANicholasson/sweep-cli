@@ -17,7 +17,10 @@ import (
 	"testing"
 )
 
-type binaries struct{ sweep, fixture string }
+type binaries struct {
+	sweep, fixture string
+	config         string
+}
 
 func build(t *testing.T) binaries {
 	t.Helper()
@@ -68,6 +71,11 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	t.Helper()
 	cmd := exec.Command(b.sweep, args...)
 	cmd.Dir = dir
+	home := b.config
+	if home == "" {
+		home = t.TempDir()
+	}
+	cmd.Env = pointConfiguration(os.Environ(), home)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -192,6 +200,55 @@ func command(t *testing.T, name string, args ...string) {
 	if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
 		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out)
 	}
+}
+
+func pointConfiguration(env []string, home string) []string {
+	switch runtime.GOOS {
+	case "windows":
+		return windowsConfigEnv(env, home)
+	case "darwin", "ios":
+		return append(without(env, "HOME"), "HOME="+home)
+	default:
+		return append(without(env, "XDG_CONFIG_HOME"), "XDG_CONFIG_HOME="+home)
+	}
+}
+
+// windowsConfigEnv points the configuration directory at home. APPDATA is
+// the name Windows sets. The comparison is case-sensitive, so leaving
+// that name in place keeps the real roaming directory.
+func windowsConfigEnv(env []string, home string) []string {
+	return append(without(env, "APPDATA", "AppData"), "AppData="+home)
+}
+
+func TestTheRealWindowsRoamingDirectoryIsDropped(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "config")
+	got := windowsConfigEnv([]string{
+		"APPDATA=C:\\Users\\real\\AppData\\Roaming",
+		"AppData=C:\\Users\\real\\AppData\\Roaming",
+		"PATH=x",
+	}, home)
+	var n int
+	for _, v := range got {
+		name, value, _ := strings.Cut(v, "=")
+		if name != "APPDATA" && name != "AppData" {
+			continue
+		}
+		n++
+		if value != home {
+			t.Errorf("%s=%s, want the temporary directory", name, value)
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d configuration directories in %v, want one", n, got)
+	}
+}
+
+func configurationFile(home string) string {
+	dir := home
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		dir = filepath.Join(home, "Library", "Application Support")
+	}
+	return filepath.Join(dir, "sweep", "config.toml")
 }
 
 func without(env []string, names ...string) []string {

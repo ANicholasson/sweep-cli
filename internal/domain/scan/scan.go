@@ -27,6 +27,9 @@ type Result struct {
 	// DockerData is the space Docker images and build cache hold, or why
 	// it could not be read. It is never a Candidate.
 	DockerData domain.DockerData
+	// Configuration is the configuration file that was read, or empty when
+	// there was none. A Scan leaves it empty.
+	Configuration string
 }
 
 // Unreadable is a path the Scan could not read, and why.
@@ -39,6 +42,15 @@ type Unreadable struct {
 // or changes anything.
 type Docker interface {
 	Data() domain.DockerData
+}
+
+// Settings is the Stale threshold and the Ignore list for one Scan.
+// StaleAfter is how old Last used must be before a Candidate is Stale.
+// Zero means a Candidate is Stale when its Last used is before now.
+// Each Ignore path, and everything beneath it, is left out of the Scan.
+type Settings struct {
+	StaleAfter time.Duration
+	Ignore     []string
 }
 
 // Scan looks beneath each Root for the directories that the InProject Rules
@@ -62,7 +74,13 @@ type Docker interface {
 // when a directory in its Project could not be read, or a file's
 // modification time could not be read, because recent work could be in
 // what was not seen. Otherwise it is Stale when its Last used is older
-// than domain.StaleAfter before now.
+// than StaleAfter before now.
+//
+// A path on the Ignore list, and everything beneath it, is left out of
+// the report. It is not a Candidate, and a path beneath it that could not
+// be read is not reported. Last used still counts the files there, so an
+// Ignore does not by itself change whether a Candidate is Stale. A path
+// that only shares a prefix with an ignored path is kept.
 //
 // Docker data is asked once, for the whole machine, and set on the Result.
 // It is not a Candidate. Docker missing or not answering is that value's
@@ -70,7 +88,7 @@ type Docker interface {
 // still complete.
 //
 // It cannot fail. What it could not read is in the Result.
-func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time) Result {
+func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time, settings Settings) Result {
 	s := scanner{
 		files:  files,
 		git:    git,
@@ -78,6 +96,8 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 		walked: map[FileID]bool{},
 		listed: map[FileID]bool{},
 		inside: map[FileID]bool{},
+		ignore: settings.Ignore,
+		formOf: map[string]string{},
 	}
 	for _, root := range roots {
 		s.enter(string(root), string(root))
@@ -91,7 +111,7 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 		candidates = append(candidates, f.candidate)
 		skip[f.id] = true
 	}
-	s.stamp(candidates, skip, now)
+	s.stamp(candidates, skip, now, settings.StaleAfter)
 	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data()}
 }
 
@@ -102,6 +122,8 @@ type scanner struct {
 	walked map[FileID]bool
 	listed map[FileID]bool
 	inside map[FileID]bool
+	ignore []string
+	formOf map[string]string
 
 	found      []found
 	unreadable []Unreadable
@@ -113,7 +135,7 @@ type found struct {
 }
 
 func (s *scanner) enter(root, path string) {
-	if !safety.Beneath(root, path, false) {
+	if s.ignored(path) || !safety.Beneath(root, path, false) {
 		return
 	}
 	space, err := s.files.Space(path)
@@ -131,7 +153,7 @@ func (s *scanner) enter(root, path string) {
 		return
 	}
 	for _, e := range entries {
-		if !safety.Beneath(root, e.Path, e.Is == Link) || e.Is != Dir {
+		if s.ignored(e.Path) || !safety.Beneath(root, e.Path, e.Is == Link) || e.Is != Dir {
 			continue
 		}
 		if r, ok := s.rules.recognise(e, entries); ok {
@@ -166,13 +188,13 @@ func (s *scanner) candidate(root string, dir Entry, r recogniser, project string
 
 // stamp sets Last used and Stale. Candidates of one Project share one time.
 // A Candidate with no Project is measured on its own, from the files inside it.
-func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now time.Time) {
+func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now time.Time, staleAfter time.Duration) {
 	type age struct {
 		at      time.Time
 		blocked bool
 	}
 	known := map[string]age{}
-	staleBefore := now.Add(-domain.StaleAfter)
+	staleBefore := now.Add(-staleAfter)
 	for i := range candidates {
 		c := &candidates[i]
 		var used time.Time
@@ -203,7 +225,7 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 	walk = func(dir string) {
 		entries, err := s.files.List(dir)
 		if err != nil {
-			s.noteUnread(dir, err)
+			s.missed(dir, err)
 			blocked = true
 			return
 		}
@@ -215,7 +237,7 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 			case Dir:
 				space, err := s.files.Space(e.Path)
 				if err != nil {
-					s.noteUnread(e.Path, err)
+					s.missed(e.Path, err)
 					blocked = true
 					continue
 				}
@@ -226,7 +248,7 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 			case File:
 				mod, err := s.files.Modified(e.Path)
 				if err != nil {
-					s.noteUnread(e.Path, err)
+					s.missed(e.Path, err)
 					blocked = true
 					continue
 				}
@@ -238,6 +260,58 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 	}
 	walk(top)
 	return newest, blocked
+}
+
+// missed records a path the Scan could not read. An ignored path is left
+// out of that report. The caller still treats the failure as unseen, so a
+// Candidate is not Stale when recent work could be in what was not read.
+func (s *scanner) missed(path string, err error) {
+	if !s.ignored(path) {
+		s.noteUnread(path, err)
+	}
+}
+
+// eachLink follows every Link in a path. The files adapter has it. A fake
+// does not, and then an Ignore path is compared as written.
+type eachLink interface {
+	EachLink(string) (string, error)
+}
+
+func (s *scanner) ignored(path string) bool {
+	if len(s.ignore) == 0 {
+		return false
+	}
+	for _, p := range s.ignore {
+		if safety.Beneath(p, path, false) {
+			return true
+		}
+	}
+	walked := s.form(path)
+	for _, p := range s.ignore {
+		if safety.Beneath(s.form(p), walked, false) {
+			return true
+		}
+	}
+	return false
+}
+
+// form is path with every Link followed, when the files port can follow
+// them. ignored calls it only after the spellings do not match, and only
+// when the Ignore list is not empty. An Ignore path and a walked path are
+// then compared in that same form, because a Root keeps an earlier Link in
+// the caller's spelling.
+func (s *scanner) form(path string) string {
+	if got, ok := s.formOf[path]; ok {
+		return got
+	}
+	out := path
+	if links, ok := s.files.(eachLink); ok {
+		if full, err := links.EachLink(path); err == nil {
+			out = full
+		}
+	}
+	s.formOf[path] = out
+	return out
 }
 
 // noteUnread records a path the Last used walk could not read, unless that
@@ -260,7 +334,7 @@ func (s *scanner) size(root, path string, own Space) domain.Size {
 	add = func(dir string) {
 		entries, err := s.files.List(dir)
 		if err != nil {
-			s.unread(dir, err)
+			s.missed(dir, err)
 			return
 		}
 		for _, e := range entries {
@@ -269,7 +343,7 @@ func (s *scanner) size(root, path string, own Space) domain.Size {
 			}
 			space, err := s.files.Space(e.Path)
 			if err != nil {
-				s.unread(e.Path, err)
+				s.missed(e.Path, err)
 				continue
 			}
 			if counted[space.File] {

@@ -21,9 +21,10 @@ import (
 )
 
 type scanJSON struct {
-	Version    int      `json:"version"`
-	Roots      []string `json:"roots"`
-	Candidates []struct {
+	Version       int      `json:"version"`
+	Configuration string   `json:"configuration"`
+	Roots         []string `json:"roots"`
+	Candidates    []struct {
 		Path      string    `json:"path"`
 		Size      int64     `json:"size"`
 		Kind      string    `json:"kind"`
@@ -60,6 +61,10 @@ func decode(t *testing.T, got ran) scanJSON {
 func TestScanOfTheFixture(t *testing.T) {
 	b := build(t)
 	dir, key := b.buildFixture(t)
+	b.config = filepath.Join(dir, "config")
+	if err := os.MkdirAll(b.config, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
 	root := at(key.Root)
 	before := listing(t, dir)
@@ -463,6 +468,7 @@ func TestASecondSpellingOfACandidateDoesNotChangeLastUsed(t *testing.T) {
 func TestTouchingASourceFileClearsStaleAndACandidateFileDoesNot(t *testing.T) {
 	b := build(t)
 	dir, _ := b.buildFixture(t)
+	b.config = filepath.Join(dir, "config")
 	root := filepath.Join(dir, "projects")
 	project := filepath.Join(dir, "projects", "stale-app")
 	candidate := filepath.Join(project, "node_modules")
@@ -702,16 +708,17 @@ type row struct {
 func readTable(t *testing.T, out string) ([]string, []row) {
 	t.Helper()
 	lines := strings.Split(out, "\n")
+	rootsAt := slices.Index(lines, "Roots")
+	header := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "SIZE") })
+	if len(lines) == 0 || lines[0] != "Configuration" || rootsAt < 0 || header < 0 {
+		t.Fatalf("no Configuration, no Roots and no table in\n%s", out)
+	}
 	var roots []string
-	for _, l := range lines[1:] {
+	for _, l := range lines[rootsAt+1:] {
 		if l == "" {
 			break
 		}
 		roots = append(roots, strings.TrimSpace(l))
-	}
-	header := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "SIZE") })
-	if lines[0] != "Roots" || header < 0 {
-		t.Fatalf("no Roots and no table in\n%s", out)
 	}
 	units := map[string]float64{"B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40}
 	var rows []row

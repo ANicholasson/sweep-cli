@@ -98,8 +98,8 @@ func TestDryRunOfTheFixture(t *testing.T) {
 		if paths := planPaths(t, out); !sameSet(t, paths, stale) {
 			t.Errorf("Plan paths = %v, want %v", paths, stale)
 		}
-		if !strings.Contains(got.stdout, "Written to "+planPath) {
-			t.Errorf("stdout is\n%s\nwant the default path", got.stdout)
+		if !sameFileNamed(t, got.stdout, planPath) {
+			t.Errorf("stdout is\n%s\nwant the default path %s", got.stdout, planPath)
 		}
 	})
 
@@ -530,6 +530,30 @@ func assertSections(t *testing.T, stdout string, stale, recent []string) {
 			t.Errorf("%s should be under not picked: used recently", path)
 		}
 	}
+}
+
+// sameFileNamed reports whether stdout's "Written to" line names path.
+// On macOS the working directory may be spelled /var or /private/var.
+func sameFileNamed(t *testing.T, stdout, path string) bool {
+	t.Helper()
+	var named string
+	for _, line := range strings.Split(stdout, "\n") {
+		if rest, ok := strings.CutPrefix(line, "Written to "); ok {
+			named = rest
+		}
+	}
+	if named == "" {
+		return false
+	}
+	a, err := os.Stat(named)
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return os.SameFile(a, b)
 }
 
 func census(t *testing.T, root string) (int64, time.Time) {

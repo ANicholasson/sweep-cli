@@ -21,7 +21,7 @@ func TestADirectoryCycleDoesNotHangTheFingerprint(t *testing.T) {
 		"app/node_modules/keep.txt": sweeptest.File{Bytes: 1},
 		"app/node_modules/again":    sweeptest.HardLink{To: "app/node_modules"},
 	})
-	found := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, ecosystems.All(), time.Now())
+	found := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, ecosystems.All(), time.Now(), scan.Settings{StaleAfter: domain.StaleAfter})
 	if len(found.Candidates) != 1 {
 		t.Fatalf("%d Candidates, want the one directory", len(found.Candidates))
 	}

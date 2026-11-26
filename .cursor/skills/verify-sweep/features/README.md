@@ -45,5 +45,6 @@ Keep implementation details out of the map. Name only user paths, commands, requ
 - [A Scan of a tree built to mislead it](./scan-hostile.md) covers Links beneath a Root, a Root that is a Link, an unreadable directory inside a Project, a repository nested in a Candidate, and a `docker` that never answers.
 - [Version and usage](./version-and-usage.md) covers `--version`, the usage message, and unknown commands and flags.
 - [Dry run writes a Plan](./clean-dry-run.md) covers the default Pick, the Plan file, `--pick`, and a Plan path inside a Candidate.
+- [Configuration](./scan-configuration.md) covers the per-user file: default Roots, the Stale threshold, the Ignore list, and a missing or rejected file.
 
 Not built yet: a Clean that removes anything, Trash and Delete. A Clean is driven only against `$RUN/fixture`, and its proof is the listing showing the Answer key's Candidates gone and every Trap present.
