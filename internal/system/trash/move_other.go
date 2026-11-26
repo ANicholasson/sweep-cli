@@ -2,6 +2,10 @@
 
 package trash
 
+// Mover refuses every move. This operating system has no trash adapter yet,
+// so the directory a Linux Mover would use is not kept.
+type Mover struct{}
+
 // Open refuses. This operating system has no trash adapter yet, so a Clean
 // removes nothing.
 func Open() (Mover, error) {

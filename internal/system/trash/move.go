@@ -13,9 +13,3 @@ var _ clean.Trash = Mover{}
 // ErrUnavailable is returned when this operating system cannot move a
 // Candidate to the trash. Nothing was removed.
 var ErrUnavailable = errors.New("this operating system has no trash yet, so nothing was removed")
-
-// Mover moves paths into one trash directory and can put them back.
-// Move never deletes a path it was asked to move. In and Open make a Mover.
-type Mover struct {
-	dir string
-}

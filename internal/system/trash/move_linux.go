@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+// Mover moves paths into one trash directory and can put them back.
+// Move never deletes a path it was asked to move. In and Open make a Mover.
+type Mover struct {
+	dir string
+}
+
 // Open is the trash in $XDG_DATA_HOME/Trash, or in
 // $HOME/.local/share/Trash when XDG_DATA_HOME is unset. The directory is
 // created when a path is moved, not before.
