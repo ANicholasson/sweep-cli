@@ -321,7 +321,7 @@ func TestTheRealWindowsCacheDirectoryIsDropped(t *testing.T) {
 }
 
 func movesToTrash() bool {
-	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 }
 
 // ensureDarwinHome creates home when a Clean will use it as HOME. A path

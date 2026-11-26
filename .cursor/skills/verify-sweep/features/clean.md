@@ -1,6 +1,6 @@
 # Clean carries out a Plan
 
-`sweep clean --plan <file>` moves exactly the Candidates in that Plan to the trash. Immediately before each one it re-checks the Git rule, the Root rule and the Fingerprint rule. A Candidate that fails one is a Skip, and nothing inside it is touched. A Candidate the trash cannot take stays in place. The summary says the moved space was moved to trash. On Windows, until a trash adapter exists, the command refuses and removes nothing.
+`sweep clean --plan <file>` moves exactly the Candidates in that Plan to the trash. Immediately before each one it re-checks the Git rule, the Root rule and the Fingerprint rule. A Candidate that fails one is a Skip, and nothing inside it is touched. A Candidate the trash cannot take stays in place. The summary says the moved space was moved to trash. On Windows the trash is the Recycle Bin, unless `XDG_DATA_HOME` names a directory, in which case that directory is used.
 
 ## Sub-features
 
@@ -23,9 +23,9 @@
 Preconditions:
 
 - Baseline preconditions from the [index](./README.md) hold.
-- On Linux, `XDG_DATA_HOME` is `$RUN/fixture/trash-home` for every Clean step, so the trash is `$RUN/fixture/trash-home/Trash` and a moved Candidate is under `Trash/files`. `XDG_CONFIG_HOME` is `$RUN/scratch/config` and `XDG_CACHE_HOME` is `$RUN/scratch/cache`.
+- On Linux and Windows, `XDG_DATA_HOME` is `$RUN/fixture/trash-home` for every Clean step, so the trash is `$RUN/fixture/trash-home/Trash` and a moved Candidate is under `Trash/files`. On Windows, leaving it unset sends the Candidate to the Recycle Bin. `XDG_CONFIG_HOME` is `$RUN/scratch/config` and `XDG_CACHE_HOME` is `$RUN/scratch/cache`.
 - On macOS, create `$RUN/fixture/trash-home` before the Clean and point `HOME` at it. It is not in the Fixture. The trash is `$RUN/fixture/trash-home/.Trash` and a moved Candidate is in that directory. The configuration file for a step that writes one is `$RUN/fixture/trash-home/Library/Application Support/sweep/config.toml`, because config and the trash both live under `HOME`.
-- A Clean step is run on Linux and macOS. Windows refuses before anything is moved, and that refusal is what the tests on Windows show.
+- A Clean step is run on Linux, macOS and Windows.
 
 - **Default Plan.** Run `"$H" run "$RUN" clean-act/dry -- clean --dry-run --plan "$RUN/scratch/plan.json" projects`. Exit status `0`, stderr empty. The Plan's only path is `projects/stale-app/node_modules`. Its Fingerprint `size` equals `"$H" du "$RUN" "$RUN/fixture/projects/stale-app/node_modules"`. `fixture-changes.txt` is empty. Run `"$H" run "$RUN" clean-act/move -- clean --plan "$RUN/scratch/plan.json"`. Exit status `0`, stderr empty. stdout contains `Moved to trash:` and the Size from `du`, and it does not contain `reclaimed`. `projects/stale-app/node_modules` is gone. On Linux the same directory is under `$RUN/fixture/trash-home/Trash/files`, and on macOS it is under `$RUN/fixture/trash-home/.Trash`. `fake-old/note.txt` there has the same bytes as before the Clean. Every other Candidate is still in place. Every Trap is still in place, including `projects/shifted-app/node_modules`. `projects/stale-app/package.json` is still in place.
 - **Changed Candidate.** Write `roots = ['$RUN/fixture/projects']` and `stale_days = 0`. Run `"$H" run "$RUN" clean-changed/dry -- clean --dry-run --plan "$RUN/scratch/changed.json"`. Exit status `0`. The Plan holds every Candidate, including `projects/shifted-app/node_modules`. Add a file inside that Candidate. Run `"$H" run "$RUN" clean-changed/move -- clean --plan "$RUN/scratch/changed.json"`. Exit status `1`, stderr empty. stdout contains `Fingerprint rule` and that Candidate's path, and `Moved to trash:` for the others. The added file is still there. The other Candidates from the Plan are under the trash and gone from where they were. Every Trap is still in place.
@@ -37,7 +37,7 @@ Preconditions:
 
 ## Gotchas
 
-- On Linux the trash follows `XDG_DATA_HOME`. On macOS it follows `HOME` and the directory is `.Trash`. Leave either unset and the Clean writes to the machine's trash. Point Linux at `$RUN/fixture/trash-home` and macOS `HOME` at the same directory.
+- On Linux and Windows the trash follows `XDG_DATA_HOME`. On macOS it follows `HOME` and the directory is `.Trash`. Leave either unset and the Clean writes to the machine's trash: `$HOME/.local/share/Trash` on Linux, `~/.Trash` on macOS, the Recycle Bin on Windows. Point Linux and Windows at `$RUN/fixture/trash-home` and macOS `HOME` at the same directory.
 - A Clean of the default Plan moves only `projects/stale-app/node_modules`. `projects/shifted-app/node_modules` is a Candidate and a Trap. It stays until a Plan includes it and it has not changed.
 - Changing a Candidate, or swapping a directory for a Link, changes the Fixture on purpose. The proof is that step's listing, not a later doctor, which then reports the Fixture changed.
-- Windows has no trash adapter. `sweep clean --plan` there exits 2, names that, and removes nothing.
+- A path the Windows Recycle Bin cannot take, including a long path or a path on a drive with no Recycle Bin, is a failure and stays in place. sweep does not delete it.

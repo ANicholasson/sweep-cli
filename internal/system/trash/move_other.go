@@ -1,9 +1,9 @@
-//go:build !linux && !darwin
+//go:build !linux && !darwin && !windows
 
 package trash
 
 // Mover refuses every move. This operating system has no trash adapter yet,
-// so the directory a Linux Mover would use is not kept.
+// so the directory a Linux, macOS or Windows Mover would use is not kept.
 type Mover struct{}
 
 // Open refuses. This operating system has no trash adapter yet, so a Clean
