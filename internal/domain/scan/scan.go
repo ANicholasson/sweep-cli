@@ -278,9 +278,17 @@ type eachLink interface {
 }
 
 func (s *scanner) ignored(path string) bool {
+	if len(s.ignore) == 0 {
+		return false
+	}
+	for _, p := range s.ignore {
+		if safety.Beneath(p, path, false) {
+			return true
+		}
+	}
 	walked := s.form(path)
 	for _, p := range s.ignore {
-		if safety.Beneath(p, path, false) || safety.Beneath(s.form(p), walked, false) {
+		if safety.Beneath(s.form(p), walked, false) {
 			return true
 		}
 	}
@@ -288,8 +296,10 @@ func (s *scanner) ignored(path string) bool {
 }
 
 // form is path with every Link followed, when the files port can follow
-// them. An Ignore path and a walked path are compared in that form, because
-// a Root keeps an earlier Link in the caller's spelling.
+// them. ignored calls it only after the spellings do not match, and only
+// when the Ignore list is not empty. An Ignore path and a walked path are
+// then compared in that same form, because a Root keeps an earlier Link in
+// the caller's spelling.
 func (s *scanner) form(path string) string {
 	if got, ok := s.formOf[path]; ok {
 		return got

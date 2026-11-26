@@ -430,3 +430,71 @@ func TestAnIgnoredPathIsLeftOut(t *testing.T) {
 		}
 	}
 }
+
+// linkCount follows every Link by recording the path and, when it sits under
+// from, spelling it under to. The fake itself does not follow a Link.
+type linkCount struct {
+	*sweeptest.Files
+	from, to string
+	asked    []string
+}
+
+func (c *linkCount) EachLink(p string) (string, error) {
+	c.asked = append(c.asked, p)
+	if c.from != "" && (p == c.from || strings.HasPrefix(p, c.from+"/")) {
+		return c.to + strings.TrimPrefix(p, c.from), nil
+	}
+	return p, nil
+}
+
+func countOf(asked []string, path string) int {
+	n := 0
+	for _, p := range asked {
+		if p == path {
+			n++
+		}
+	}
+	return n
+}
+
+func TestAnEmptyIgnoreListDoesNotResolvePaths(t *testing.T) {
+	links := &linkCount{Files: sweeptest.NewFiles(sweeptest.Tree{
+		"app/package.json":      sweeptest.File{Bytes: 1, Modified: scanNow.Add(-time.Hour)},
+		"app/node_modules/a.js": sweeptest.File{Bytes: 1},
+	})}
+	got := scan.Scan(links, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow, defaultSettings)
+	if len(links.asked) != 0 {
+		t.Errorf("resolved %v, and the Ignore list is empty", links.asked)
+	}
+	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/app/node_modules" {
+		t.Errorf("Candidates = %+v, want app/node_modules", got.Candidates)
+	}
+}
+
+func TestIgnoreResolvesOnlyAPathTheSpellingMisses(t *testing.T) {
+	real := sweeptest.Top + "/real/node_modules"
+	via := sweeptest.Top + "/via/node_modules"
+	links := &linkCount{
+		Files: sweeptest.NewFiles(sweeptest.Tree{
+			"real/package.json":      sweeptest.File{Bytes: 1, Modified: scanNow.Add(-time.Hour)},
+			"real/node_modules/a.js": sweeptest.File{Bytes: 1},
+			"via/package.json":       sweeptest.File{Bytes: 1, Modified: scanNow.Add(-time.Hour)},
+			"via/node_modules/a.js":  sweeptest.File{Bytes: 1},
+		}),
+		from: sweeptest.Top + "/via",
+		to:   sweeptest.Top + "/real",
+	}
+	got := scan.Scan(links, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow, scan.Settings{
+		StaleAfter: domain.StaleAfter,
+		Ignore:     []string{real},
+	})
+	if len(got.Candidates) != 0 {
+		t.Errorf("Candidates = %+v, want none: the spelling matches one and the other only after every Link", got.Candidates)
+	}
+	if countOf(links.asked, real) != 1 {
+		t.Errorf("resolved %s %d times, want once, for the Ignore path", real, countOf(links.asked, real))
+	}
+	if countOf(links.asked, via) != 1 {
+		t.Errorf("resolved %s %d times, want once, because the spelling does not match", via, countOf(links.asked, via))
+	}
+}
