@@ -71,11 +71,14 @@ JSON file with a `version` field. It records the Roots and each picked
 Candidate with its Fingerprint: the file identity of the Candidate, the
 number of directory entries inside it, its Size and its newest
 modification. A Link counts as one entry and is not followed. The default
-file is `sweep-plan.json` in the current directory, and `--plan` names
-another. The Plan is never written inside a Candidate. A file that already
-exists is replaced only when it is an earlier Plan. Any other existing
-file is left as it was, and the dry run writes nothing. A new Plan file
-inside a Project changes that Project's Last used. `--pick` adds one
+file is `sweep/plan.json` in the operating system's per-user cache
+directory: `$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches`
+on macOS, and `%LocalAppData%` on Windows. The dry run prints that full
+path. `--plan` names another file. The Plan is never written inside a
+Candidate, and `--plan` with a path inside a Project the Scan found is
+refused before anything is written. A file that already exists is
+replaced only when it is an earlier Plan. Any other existing file is left
+as it was, and the dry run writes nothing. `--pick` adds one
 Candidate the default Pick left out. Nothing is removed. The run ends with
 how many Candidates and how much Size are in the Plan, what was left out,
 and how to add it with `--pick`.
@@ -84,7 +87,7 @@ The exit status is 0 when the Plan is written and the dry run read
 everything, 1 when something could not be read or the Plan or the output
 could not be written, and 2 when the command line is wrong, a Root is not
 a directory, a `--pick` path is not a Candidate, or the Plan would be
-written inside a Candidate. A usage error writes no Plan.
+written inside a Candidate or a Project. A usage error writes no Plan.
 
 ## Safety rules
 

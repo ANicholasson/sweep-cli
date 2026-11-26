@@ -15,11 +15,18 @@ import (
 func TestDryRunOfTheFixture(t *testing.T) {
 	b := build(t)
 	dir, key := b.buildFixture(t)
+	// The per-user cache is pointed into this run, as the configuration
+	// directory is. The Plan written there is expected, so the comparison
+	// below does not watch that directory.
+	b.cache = filepath.Join(dir, "cache")
+	if err := os.MkdirAll(b.cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
 	root := at(key.Root)
 	before := listing(t, dir)
 	t.Cleanup(func() {
-		for _, d := range differences(before, listing(t, dir)) {
+		for _, d := range differences(withoutTree(before, b.cache), withoutTree(listing(t, dir), b.cache)) {
 			t.Errorf("the Fixture changed during a dry run: %s", d)
 		}
 	})
@@ -87,16 +94,23 @@ func TestDryRunOfTheFixture(t *testing.T) {
 		}
 	})
 
-	t.Run("the default file is sweep-plan.json in the working directory", func(t *testing.T) {
+	t.Run("the default file is sweep/plan.json in the per-user cache directory", func(t *testing.T) {
 		work := t.TempDir()
 		got := b.run(t, work, "clean", "--dry-run", root)
 		if got.status != 0 || got.stderr != "" {
 			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
 		}
-		planPath := filepath.Join(work, "sweep-plan.json")
+		if _, err := os.Lstat(filepath.Join(work, "sweep-plan.json")); !os.IsNotExist(err) {
+			t.Errorf("wrote sweep-plan.json in the working directory: %v", err)
+		}
+		planPath := planFile(b.cache)
 		out := decodePlan(t, planPath)
 		if paths := planPaths(t, out); !sameSet(t, paths, stale) {
 			t.Errorf("Plan paths = %v, want %v", paths, stale)
+		}
+		written := writtenPath(got.stdout)
+		if !filepath.IsAbs(written) {
+			t.Errorf("Written to %q, want a full path", written)
 		}
 		if !sameFileNamed(t, got.stdout, planPath) {
 			t.Errorf("stdout is\n%s\nwant the default path %s", got.stdout, planPath)
@@ -121,14 +135,169 @@ func TestDryRunOfTheFixture(t *testing.T) {
 		}
 	})
 
-	t.Run("the default Plan is refused when the working directory is a Candidate", func(t *testing.T) {
+	t.Run("a dry run from inside a Candidate writes the Plan in the cache", func(t *testing.T) {
 		candidate := at("projects/stale-app/node_modules")
 		got := b.run(t, candidate, "clean", "--dry-run", root)
-		if got.status != 2 {
-			t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
 		}
 		if _, err := os.Lstat(filepath.Join(candidate, "sweep-plan.json")); !os.IsNotExist(err) {
 			t.Errorf("wrote sweep-plan.json inside the Candidate: %v", err)
+		}
+		if _, err := os.Lstat(planFile(b.cache)); err != nil {
+			t.Errorf("the Plan was not written in the cache: %v", err)
+		}
+	})
+
+	t.Run("a Plan path inside a Project is refused before anything is written", func(t *testing.T) {
+		project := at("projects/stale-app")
+		planPath := filepath.Join(project, "src", "plan.json")
+		got := b.run(t, dir, "clean", "--dry-run", "--plan", planPath, root)
+		if got.status != 2 {
+			t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+		}
+		if got.stdout != "" {
+			t.Errorf("stdout = %q, want nothing", got.stdout)
+		}
+		if !strings.Contains(got.stderr, planPath) || !strings.Contains(got.stderr, project) {
+			t.Errorf("stderr = %q, want the path and the Project", got.stderr)
+		}
+		if _, err := os.Lstat(planPath); !os.IsNotExist(err) {
+			t.Errorf("wrote the Plan inside the Project: %v", err)
+		}
+	})
+
+	t.Run("a Plan reached through a Link into a Project is refused", func(t *testing.T) {
+		project := at("projects/stale-app")
+		link := filepath.Join(t.TempDir(), "project")
+		if err := os.Symlink(project, link); err != nil {
+			if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+				t.Skipf("this account may not make a symlink: %v", err)
+			}
+			t.Fatal(err)
+		}
+		planPath := filepath.Join(link, "plan.json")
+		got := b.run(t, dir, "clean", "--dry-run", "--plan", planPath, root)
+		if got.status != 2 {
+			t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+		}
+		if got.stdout != "" {
+			t.Errorf("stdout = %q, want nothing", got.stdout)
+		}
+		if !strings.Contains(got.stderr, planPath) || !strings.Contains(got.stderr, project) {
+			t.Errorf("stderr = %q, want the path and the Project", got.stderr)
+		}
+		if _, err := os.Lstat(filepath.Join(project, "plan.json")); !os.IsNotExist(err) {
+			t.Errorf("wrote the Plan inside the Project through a Link: %v", err)
+		}
+	})
+
+	t.Run("a Plan path in a missing directory inside a Project is refused", func(t *testing.T) {
+		project := at("projects/stale-app")
+		planPath := filepath.Join(project, "missing", "plan.json")
+		got := b.run(t, dir, "clean", "--dry-run", "--plan", planPath, root)
+		if got.status != 2 {
+			t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+		}
+		if got.stdout != "" {
+			t.Errorf("stdout = %q, want nothing", got.stdout)
+		}
+		if !strings.Contains(got.stderr, planPath) || !strings.Contains(got.stderr, project) {
+			t.Errorf("stderr = %q, want the path and the Project", got.stderr)
+		}
+		if _, err := os.Lstat(filepath.Join(project, "missing")); !os.IsNotExist(err) {
+			t.Errorf("created a directory inside the Project: %v", err)
+		}
+	})
+
+	t.Run("a relative Plan path inside a Stale Project is refused", func(t *testing.T) {
+		project := at("projects/stale-app")
+		got := b.run(t, project, "clean", "--dry-run", "--plan", "plan.json", ".")
+		if got.status != 2 {
+			t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+		}
+		if got.stdout != "" {
+			t.Errorf("stdout = %q, want nothing", got.stdout)
+		}
+		if !strings.Contains(got.stderr, "plan.json") || !strings.Contains(got.stderr, project) {
+			t.Errorf("stderr = %q, want the path and the Project", got.stderr)
+		}
+		if _, err := os.Lstat(filepath.Join(project, "plan.json")); !os.IsNotExist(err) {
+			t.Errorf("wrote the Plan inside the Project: %v", err)
+		}
+	})
+
+	t.Run("two dry runs from inside a Stale Project give the same Plan", func(t *testing.T) {
+		project := at("projects/stale-app")
+		var want []string
+		for _, path := range stale {
+			if path == project || strings.HasPrefix(path, project+string(os.PathSeparator)) {
+				want = append(want, path)
+			}
+		}
+		if len(want) != 1 {
+			t.Fatalf("Stale Candidates in %s = %d, want 1", project, len(want))
+		}
+		before := listing(t, project)
+		planPath := planFile(b.cache)
+		var first []byte
+		var last ran
+		for i := range 2 {
+			got := b.run(t, project, "clean", "--dry-run", ".")
+			last = got
+			if got.status != 0 || got.stderr != "" {
+				t.Fatalf("run %d: exit status %d, stderr %q", i+1, got.status, got.stderr)
+			}
+			if !strings.Contains(got.stdout, countPhrase(len(want))+" in the Plan") {
+				t.Errorf("run %d stdout is\n%s\nwant %s in the Plan", i+1, got.stdout, countPhrase(len(want)))
+			}
+			data, err := os.ReadFile(planPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if i == 0 {
+				first = data
+			} else if string(data) != string(first) {
+				t.Errorf("the second Plan is\n%s\nthe first is\n%s", data, first)
+			}
+		}
+		out := decodePlan(t, planPath)
+		if paths := planPaths(t, out); !sameSet(t, paths, want) {
+			t.Errorf("Plan paths = %v, want %v", paths, want)
+		}
+		for _, c := range out.Candidates {
+			onDisk := du(t, c.Path)
+			if c.Fingerprint.Size != onDisk {
+				t.Errorf("%s: Fingerprint Size = %d, and du -s gives %d", c.Path, c.Fingerprint.Size, onDisk)
+			}
+		}
+		written := writtenPath(last.stdout)
+		if !filepath.IsAbs(written) || !sameFileNamed(t, last.stdout, planPath) {
+			t.Errorf("stdout is\n%s\nwant the full path %s", last.stdout, planPath)
+		}
+		for _, d := range differences(before, listing(t, project)) {
+			t.Errorf("the Project changed: %s", d)
+		}
+	})
+
+	t.Run("the default Plan is refused when the cache directory is inside a Project", func(t *testing.T) {
+		project := at("projects/stale-app")
+		local := b
+		local.cache = project
+		got := local.run(t, dir, "clean", "--dry-run", root)
+		if got.status != 2 {
+			t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+		}
+		if got.stdout != "" {
+			t.Errorf("stdout = %q, want nothing", got.stdout)
+		}
+		if !strings.Contains(got.stderr, project) || !strings.Contains(got.stderr, "plan.json") {
+			t.Errorf("stderr = %q, want the path and the Project", got.stderr)
+		}
+		for _, rel := range []string{"sweep", "Library"} {
+			if _, err := os.Lstat(filepath.Join(project, rel)); !os.IsNotExist(err) {
+				t.Errorf("wrote %s inside the Project: %v", rel, err)
+			}
 		}
 	})
 
@@ -170,7 +339,7 @@ func TestDryRunOfTheFixture(t *testing.T) {
 	})
 
 	t.Run("an existing file that is not a Plan is left unchanged", func(t *testing.T) {
-		manifest := at("projects/tracked-app/package.json")
+		manifest := filepath.Join(dir, "answer-key.json")
 		before, err := os.ReadFile(manifest)
 		if err != nil {
 			t.Fatal(err)
@@ -530,6 +699,29 @@ func assertSections(t *testing.T, stdout string, stale, recent []string) {
 			t.Errorf("%s should be under not picked: used recently", path)
 		}
 	}
+}
+
+// withoutTree drops skip and everything under it, so the per-user cache
+// pointed into the run is not counted as a change to the Fixture.
+func withoutTree(found map[string]string, skip string) map[string]string {
+	prefix := skip + string(os.PathSeparator)
+	out := make(map[string]string, len(found))
+	for p, line := range found {
+		if p == skip || strings.HasPrefix(p, prefix) {
+			continue
+		}
+		out[p] = line
+	}
+	return out
+}
+
+func writtenPath(stdout string) string {
+	for _, line := range strings.Split(stdout, "\n") {
+		if rest, ok := strings.CutPrefix(line, "Written to "); ok {
+			return rest
+		}
+	}
+	return ""
 }
 
 // sameFileNamed reports whether stdout's "Written to" line names path.

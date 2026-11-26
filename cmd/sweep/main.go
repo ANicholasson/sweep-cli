@@ -120,7 +120,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		flags.PrintDefaults()
 	}
 	dry := flags.Bool("dry-run", false, "write a Plan and remove nothing")
-	planPath := flags.String("plan", "sweep-plan.json", "file the Plan is written to")
+	planPath := flags.String("plan", "", "file the Plan is written to, instead of the per-user cache")
 	var pick repeated
 	flags.Var(&pick, "pick", "add this Candidate to the Plan")
 	given, err := parseInterspersed(flags, args)
@@ -157,13 +157,31 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		return incomplete
 	}
-	dest, real, err := planDestination(*planPath)
+	chosen := *planPath
+	if chosen == "" {
+		chosen, err = defaultPlanPath()
+		if err != nil {
+			say(stderr, err)
+			return incomplete
+		}
+	}
+	// Refuse before creating a directory. A Plan inside a Project becomes
+	// that Project's newest file, and the next dry run then drops it.
+	if refusePlan(stderr, chosen, chosen, result.Candidates) {
+		return misused
+	}
+	if *planPath == "" {
+		if err := os.MkdirAll(filepath.Dir(chosen), 0o755); err != nil {
+			say(stderr, err)
+			return incomplete
+		}
+	}
+	dest, real, err := planDestination(chosen)
 	if err != nil {
 		say(stderr, err)
 		return misused
 	}
-	if c, ok := insideCandidate(real, result.Candidates); ok {
-		say(stderr, fmt.Errorf("the Plan would be written inside the Candidate %s", c))
+	if refusePlan(stderr, chosen, real, result.Candidates) {
 		return misused
 	}
 	data, err := plan.Marshal(built)
@@ -220,17 +238,75 @@ func planDestination(path string) (write, real string, err error) {
 	return abs, real, nil
 }
 
+// defaultPlanPath is sweep/plan.json in the operating system's per-user
+// cache directory. The Plan is not written in the current directory, so a
+// dry run from inside a Project does not change that Project's Last used.
+func defaultPlanPath() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "sweep", "plan.json"), nil
+}
+
+// refusePlan reports whether planPath would land inside a Candidate or a
+// Project and prints the usage error. where is the path to judge, after a
+// Link on the way has been followed when it can be. planPath is the path
+// named in the message.
+func refusePlan(stderr io.Writer, planPath, where string, candidates []domain.Candidate) bool {
+	if c, ok := insideCandidate(where, candidates); ok {
+		say(stderr, fmt.Errorf("the Plan would be written inside the Candidate %s", c))
+		return true
+	}
+	if project, ok := insideProject(where, candidates); ok {
+		say(stderr, fmt.Errorf("the Plan %s would be written inside the Project %s", planPath, project))
+		return true
+	}
+	return false
+}
+
 func insideCandidate(dest string, candidates []domain.Candidate) (string, bool) {
+	paths := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		paths = append(paths, c.Path)
+	}
+	return insideDirectory(dest, paths)
+}
+
+func insideProject(dest string, candidates []domain.Candidate) (string, bool) {
+	var paths []string
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		if c.Project == "" || seen[c.Project] {
+			continue
+		}
+		seen[c.Project] = true
+		paths = append(paths, c.Project)
+	}
+	return insideDirectory(dest, paths)
+}
+
+// insideDirectory reports which of dirs contains dest. A directory is
+// matched by file identity, so another spelling of it counts. A Link on
+// the way is followed. A directory that does not exist yet is skipped, so
+// the directory that would hold the Plan is still found.
+func insideDirectory(dest string, dirs []string) (string, bool) {
 	disk := files.Disk{}
 	want := map[scan.FileID]string{}
-	for _, c := range candidates {
-		space, err := disk.Space(c.Path)
+	for _, p := range dirs {
+		space, err := disk.Space(p)
 		if err != nil {
 			continue
 		}
-		want[space.File] = c.Path
+		if _, ok := want[space.File]; !ok {
+			want[space.File] = p
+		}
 	}
-	dir := dest
+	real, err := landed(dest)
+	if err != nil {
+		return "", false
+	}
+	dir := real
 	for {
 		next := filepath.Dir(dir)
 		if next == dir {
@@ -239,12 +315,50 @@ func insideCandidate(dest string, candidates []domain.Candidate) (string, bool) 
 		dir = next
 		space, err := disk.Space(dir)
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return "", false
 		}
 		if path, ok := want[space.File]; ok {
 			return path, true
 		}
 	}
+}
+
+// landed is where dest would be written once every existing Link on the
+// way is followed. Components that are not there yet stay on the end.
+func landed(dest string) (string, error) {
+	abs, err := filepath.Abs(dest)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	var missing []string
+	cur := abs
+	for {
+		_, err := os.Lstat(cur)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(cur))
+		cur = parent
+	}
+	resolved, err := files.ResolveDir(cur)
+	if err != nil {
+		return "", err
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		resolved = filepath.Join(resolved, missing[i])
+	}
+	return resolved, nil
 }
 
 var errNotPlan = errors.New("exists and is not a Plan")
