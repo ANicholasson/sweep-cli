@@ -34,7 +34,7 @@ A change is done when the gate passes and the pull request shows the evidence.
 
 Before calling a change done, prove its behaviour with the skill in `.cursor/skills/verify-sweep/` and put the evidence it keeps in the pull request.
 
-When the gate passes and the evidence is in the pull request, give the pull request the label `review`. An independent review then runs and posts a verdict as a comment, and it runs again on every later push while the label stays. Each verdict names the commit it reviewed and speaks for that commit only. Fix every blocker it names. A pull request is ready for the maintainer when the verdict for its newest commit says ready to land.
+When the gate passes and the evidence is in the pull request, give the pull request the label `review`. An independent review then runs and posts a verdict as a comment, and it runs again on every later push while the label stays. Each verdict names the commit it reviewed and speaks for that commit only. Fix every blocker it names. A pull request is ready for the maintainer when the verdict for its newest commit says ready to land. The status `verdict` on that commit shows it: passed for ready to land, failed for not ready, and absent while the commit has no verdict.
 
 ## Tests
 
