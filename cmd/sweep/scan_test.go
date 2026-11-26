@@ -806,8 +806,6 @@ func withCache(t *testing.T, roots []string, cache string) []string {
 	return append(out, cache)
 }
 
-// newestInside is the newest modification of the regular files inside
-// path, which is what Last used must equal for a Candidate with no Project.
 func newestInside(t *testing.T, path string) time.Time {
 	t.Helper()
 	var newest time.Time

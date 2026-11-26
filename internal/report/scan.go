@@ -222,11 +222,6 @@ type projectGroup struct {
 	candidates []domain.Candidate
 }
 
-// grouped keeps the Scan's order and puts Candidates of one Project together,
-// in the order the Scan first met that Project. A Shared cache is grouped
-// under one heading, apart from the Candidates beneath the user's Roots.
-// Any other Candidate with no Project stands in a group of its own, because
-// its Last used is its own.
 func grouped(candidates []domain.Candidate) []projectGroup {
 	var out []projectGroup
 	index := map[string]int{}

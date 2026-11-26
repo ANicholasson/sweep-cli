@@ -8,7 +8,7 @@ import "time"
 // the current directory. StaleAfter is how old Last used must be before a
 // Candidate is Stale. Ignore lists paths a Scan never reports, each one
 // and everything beneath it. SharedCaches adds each known Shared cache as
-// a Root. A missing file and a file that omits the key both leave it on.
+// a Root.
 type Configuration struct {
 	Path         string
 	Roots        []string

@@ -146,11 +146,6 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 	return Result{Roots: slices.Clone(roots), Added: added, Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data(), StaleAfter: settings.StaleAfter}
 }
 
-// placeCaches records each Shared cache that is a directory inside home and
-// returns the ones the caller did not already give as a Root. A location
-// outside home is not recorded. The check uses the path the files adapter
-// returns, so a path that only looks relative and then leaves home is
-// refused here too.
 func (s *scanner) placeCaches(ecosystems []domain.Ecosystem, home string, given []domain.Root) []domain.Root {
 	if home == "" {
 		return nil
@@ -162,8 +157,11 @@ func (s *scanner) placeCaches(ecosystems []domain.Ecosystem, home string, given 
 			if !ok {
 				continue
 			}
-			full, ok := s.insideHome(home, cacheLocation(w))
-			if !ok {
+			full, err := s.insideHome(home, cacheLocation(w))
+			if err != nil {
+				if !errors.Is(err, errNotAdded) && !s.ignored(full) {
+					s.unread(full, err)
+				}
 				continue
 			}
 			got := placed{recogniser{ecosystem: e.Name, rule: r}}
@@ -176,7 +174,8 @@ func (s *scanner) placeCaches(ecosystems []domain.Ecosystem, home string, given 
 				continue
 			}
 			s.cacheID[space.File] = got
-			if s.knownRoot(given, space.File, got) {
+			if spelling := rootSpelling(s.files, given, space.File); spelling != "" {
+				s.caches[spelling] = got
 				continue
 			}
 			added = append(added, domain.Root(full))
@@ -186,40 +185,31 @@ func (s *scanner) placeCaches(ecosystems []domain.Ecosystem, home string, given 
 	return added
 }
 
-// knownRoot reports whether a Root the caller gave is the same directory
-// as id. It records that spelling too, so a later walk of it still treats
-// the directory as the Shared cache.
-func (s *scanner) knownRoot(given []domain.Root, id FileID, got placed) bool {
+func rootSpelling(files Files, given []domain.Root, id FileID) string {
 	for _, root := range given {
-		space, err := s.files.Space(string(root))
+		space, err := files.Space(string(root))
 		if err != nil || space.File != id {
 			continue
 		}
-		s.caches[string(root)] = got
-		return true
+		return string(root)
 	}
-	return false
+	return ""
 }
 
-// insideHome is location as a directory inside home, spelled the way the
-// files adapter spells it. It is false when location is not a clean
-// slash-separated path inside the home directory, when any step leaves
-// home, when the directory is missing, and when the directory or a parent
-// is on the Ignore list. An Ignore path is not read and its failure is
-// not reported. Any other directory on the way that cannot be read is
-// recorded, and then the cache is not added.
-func (s *scanner) insideHome(home, location string) (string, bool) {
+var errNotAdded = errors.New("not added")
+
+func (s *scanner) insideHome(home, location string) (string, error) {
 	if !cleanRelative(location) || s.ignored(home) {
-		return "", false
+		return "", errNotAdded
 	}
 	cur := home
 	for _, part := range strings.Split(location, "/") {
 		entries, err := s.files.List(cur)
 		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) && !s.ignored(cur) {
-				s.unread(cur, err)
+			if errors.Is(err, fs.ErrNotExist) || s.ignored(cur) {
+				return "", errNotAdded
 			}
-			return "", false
+			return cur, err
 		}
 		var next Entry
 		var found bool
@@ -230,11 +220,11 @@ func (s *scanner) insideHome(home, location string) (string, bool) {
 			}
 		}
 		if !found || next.Is != Dir || s.ignored(next.Path) || !safety.Beneath(home, next.Path, false) || next.Path == home {
-			return "", false
+			return "", errNotAdded
 		}
 		cur = next.Path
 	}
-	return cur, true
+	return cur, nil
 }
 
 func (s *scanner) shared(root, path string, c placed) {
@@ -276,8 +266,6 @@ func cacheLocation(w domain.InSharedCache) string {
 	}
 }
 
-// cleanRelative is a slash-separated path that stays inside the home
-// directory: no root, no empty step, and no step that climbs out.
 func cleanRelative(location string) bool {
 	return location != "" &&
 		!path.IsAbs(location) &&
@@ -316,8 +304,6 @@ type scanner struct {
 	unreadable []Unreadable
 }
 
-// placed is one Shared cache a Scan will add, at the path the files
-// adapter gave for it.
 type placed struct {
 	recogniser recogniser
 }
@@ -340,9 +326,6 @@ func (s *scanner) enter(root, path string) {
 		s.unread(path, err)
 		return
 	}
-	// Another spelling of a Shared cache, such as a Root that reaches the
-	// home directory through a Link, is the same directory. Recognise it
-	// before the walk marks it seen and then skips the added Root.
 	if c, ok := s.cacheID[space.File]; ok {
 		s.shared(root, path, c)
 		return
@@ -383,8 +366,6 @@ func (s *scanner) candidate(root string, dir Entry, r recogniser, project string
 	}
 	measured := domain.Size(space.Bytes)
 	if dir.Is == File {
-		// A file is its own Size. Listing it fails, and that failure is
-		// not a directory the Scan could not read.
 		s.fileCandidate[dir.Path] = true
 	} else {
 		measured = s.size(root, dir.Path, space)

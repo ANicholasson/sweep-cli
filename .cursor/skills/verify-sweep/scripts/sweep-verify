@@ -217,8 +217,6 @@ cmd_run() {
 	listing "$run/fixture" > "$out/fixture-before.txt"
 	touch "$out/.started"
 	set +e
-	# Shared caches are Roots inside the home directory. That home is the
-	# scratch copy, so a Plan is not written into the Fixture.
 	(cd "$dir" && HOME="$run/scratch/home" USERPROFILE="$run/scratch/home" "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
 	status=$?
 	set -e

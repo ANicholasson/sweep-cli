@@ -163,8 +163,6 @@ func TestAMissingSharedCacheIsNotAdded(t *testing.T) {
 	}
 }
 
-// redirect reports home/cache at a path outside home. The directory is real
-// in the fake; only the path the adapter returns leaves home.
 type redirect struct{ scan.Files }
 
 func (r redirect) List(dir string) ([]scan.Entry, error) {

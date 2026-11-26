@@ -612,13 +612,6 @@ func (r *repeated) Set(s string) error {
 	return nil
 }
 
-// scanTree reads the Configuration and scans. The Roots are given when the
-// command names any. Otherwise they are the Configuration's Roots, or the
-// current directory when the Configuration names none. The Stale threshold
-// and the Ignore list come from the Configuration, unless staleAfter is
-// set, which is the threshold for this run. Shared caches are added when
-// the setting is on and shared is set. The Result names the file that was
-// read.
 func scanTree(given []string, shared bool, staleAfter *time.Duration) (scan.Result, []string, error) {
 	cfg, err := configuration()
 	if err != nil {
@@ -641,8 +634,6 @@ func scanTree(given []string, shared bool, staleAfter *time.Duration) (scan.Resu
 	}
 	settings := scan.Settings{StaleAfter: after, Ignore: ignore}
 	if shared && cfg.SharedCaches {
-		// An unknown home adds no Shared cache. The Roots the caller
-		// gave are still scanned.
 		if home, err := os.UserHomeDir(); err == nil {
 			settings.Home = home
 			settings.SharedCaches = true

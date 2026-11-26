@@ -122,10 +122,6 @@ var committed = []entry{
 	{"projects/plain/target/note.txt", file("not a crate\n")},
 }
 
-// npmCachePath is the npm cache inside the Fixture's home directory, for
-// the operating system that builds the Fixture. The other systems' paths
-// are not created. A Scan finds it only when its home directory is this
-// home, so a test never reads the machine's home.
 func npmCachePath() string {
 	if runtime.GOOS == "windows" {
 		return "home/AppData/Local/npm-cache/_cacache"

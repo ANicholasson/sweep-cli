@@ -270,9 +270,6 @@ func candidateName(name string) bool {
 	return false
 }
 
-// recognised reports the Kind of the Rule that finds p the way a Scan would,
-// by its name and the Manifest beside it, or by the Shared cache location
-// inside the Fixture's home directory.
 func recognised(dir, p string) (string, bool) {
 	for _, e := range ecosystems.All() {
 		for _, r := range e.Rules {
