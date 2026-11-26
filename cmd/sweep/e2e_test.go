@@ -20,6 +20,7 @@ import (
 type binaries struct {
 	sweep, fixture string
 	config         string
+	cache          string
 }
 
 func build(t *testing.T) binaries {
@@ -71,11 +72,8 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	t.Helper()
 	cmd := exec.Command(b.sweep, args...)
 	cmd.Dir = dir
-	home := b.config
-	if home == "" {
-		home = t.TempDir()
-	}
-	cmd.Env = pointConfiguration(os.Environ(), home)
+	configHome, cacheHome := b.userHomes(t)
+	cmd.Env = pointUserDirs(os.Environ(), configHome, cacheHome)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -202,15 +200,49 @@ func command(t *testing.T, name string, args ...string) {
 	}
 }
 
-func pointConfiguration(env []string, home string) []string {
+// userHomes is the configuration directory and the cache directory for one
+// run. An empty field is a fresh temporary directory, so a run never reads
+// or writes the real per-user directories. On macOS both come from HOME, so
+// a test that sets one gets the other under that same home.
+func (b binaries) userHomes(t *testing.T) (configHome, cacheHome string) {
+	t.Helper()
+	configHome = b.config
+	if configHome == "" {
+		configHome = t.TempDir()
+	}
+	cacheHome = b.cache
+	if cacheHome == "" {
+		cacheHome = t.TempDir()
+	}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		switch {
+		case b.cache != "" && b.config == "":
+			configHome = cacheHome
+		default:
+			cacheHome = configHome
+		}
+	}
+	return configHome, cacheHome
+}
+
+func pointUserDirs(env []string, configHome, cacheHome string) []string {
 	switch runtime.GOOS {
 	case "windows":
-		return windowsConfigEnv(env, home)
+		env = windowsConfigEnv(env, configHome)
+		return windowsCacheEnv(env, cacheHome)
 	case "darwin", "ios":
-		return append(without(env, "HOME"), "HOME="+home)
+		return append(without(env, "HOME"), "HOME="+configHome)
 	default:
-		return append(without(env, "XDG_CONFIG_HOME"), "XDG_CONFIG_HOME="+home)
+		env = append(without(env, "XDG_CONFIG_HOME"), "XDG_CONFIG_HOME="+configHome)
+		return append(without(env, "XDG_CACHE_HOME"), "XDG_CACHE_HOME="+cacheHome)
 	}
+}
+
+// windowsCacheEnv points the cache directory at cache. LocalAppData is the
+// name Windows sets. The comparison is case-sensitive, so leaving that name
+// in place keeps the real local directory.
+func windowsCacheEnv(env []string, cache string) []string {
+	return append(without(env, "LOCALAPPDATA", "LocalAppData"), "LocalAppData="+cache)
 }
 
 // windowsConfigEnv points the configuration directory at home. APPDATA is
@@ -243,12 +275,45 @@ func TestTheRealWindowsRoamingDirectoryIsDropped(t *testing.T) {
 	}
 }
 
+func TestTheRealWindowsCacheDirectoryIsDropped(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "cache")
+	got := windowsCacheEnv([]string{
+		"LOCALAPPDATA=C:\\AppData\\Local",
+		"LocalAppData=C:\\AppData\\Local",
+		"PATH=x",
+	}, cache)
+	var n int
+	for _, v := range got {
+		name, value, _ := strings.Cut(v, "=")
+		if name != "LOCALAPPDATA" && name != "LocalAppData" {
+			continue
+		}
+		n++
+		if value != cache {
+			t.Errorf("%s=%s, want the temporary directory", name, value)
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d cache directories in %v, want one", n, got)
+	}
+}
+
 func configurationFile(home string) string {
 	dir := home
 	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
 		dir = filepath.Join(home, "Library", "Application Support")
 	}
 	return filepath.Join(dir, "sweep", "config.toml")
+}
+
+// planFile is the default Plan path when the cache directory is pointed at
+// home. home is that cache directory, except on macOS, where it is HOME.
+func planFile(home string) string {
+	dir := home
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		dir = filepath.Join(home, "Library", "Caches")
+	}
+	return filepath.Join(dir, "sweep", "plan.json")
 }
 
 func without(env []string, names ...string) []string {
