@@ -73,30 +73,11 @@ func scanCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return misused
 	}
-	cfg, err := configuration()
+	result, err := scanTree(given)
 	if err != nil {
 		say(stderr, err)
 		return misused
 	}
-	if len(given) == 0 {
-		given = cfg.Roots
-	}
-	roots, err := rootsOf(given)
-	if err != nil {
-		say(stderr, err)
-		return misused
-	}
-	ignore, err := resolveIgnore(cfg.Ignore)
-	if err != nil {
-		say(stderr, err)
-		return misused
-	}
-
-	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), scan.Settings{
-		StaleAfter: cfg.StaleAfter,
-		Ignore:     ignore,
-	})
-	result.Configuration = cfg.Path
 
 	format := report.Table
 	if *asJSON {
@@ -131,7 +112,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		flags.Usage()
 		return misused
 	}
-	roots, err := rootsOf(given)
+	result, err := scanTree(given)
 	if err != nil {
 		say(stderr, err)
 		return misused
@@ -147,7 +128,6 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	}
 
 	disk := files.Disk{}
-	result := scan.Scan(disk, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), scan.Settings{StaleAfter: domain.StaleAfter})
 	built, choices, err := plan.Build(disk, result, named)
 	if err != nil {
 		var unknown plan.UnknownPath
@@ -416,6 +396,35 @@ func (r *repeated) String() string { return strings.Join(*r, ",") }
 func (r *repeated) Set(s string) error {
 	*r = append(*r, s)
 	return nil
+}
+
+// scanTree reads the Configuration and scans. The Roots are given when it
+// names any. Otherwise they are the Configuration's Roots, or the current
+// directory when the Configuration names none. The Stale threshold and the
+// Ignore list come from the Configuration. The Result names the file that
+// was read.
+func scanTree(given []string) (scan.Result, error) {
+	cfg, err := configuration()
+	if err != nil {
+		return scan.Result{}, err
+	}
+	if len(given) == 0 {
+		given = cfg.Roots
+	}
+	roots, err := rootsOf(given)
+	if err != nil {
+		return scan.Result{}, err
+	}
+	ignore, err := resolveIgnore(cfg.Ignore)
+	if err != nil {
+		return scan.Result{}, err
+	}
+	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), scan.Settings{
+		StaleAfter: cfg.StaleAfter,
+		Ignore:     ignore,
+	})
+	result.Configuration = cfg.Path
+	return result, nil
 }
 
 func configuration() (domain.Configuration, error) {

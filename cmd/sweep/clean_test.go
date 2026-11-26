@@ -394,6 +394,242 @@ func TestDryRunOfTheFixture(t *testing.T) {
 	})
 }
 
+func TestDryRunReadsTheConfiguration(t *testing.T) {
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	b.config = filepath.Join(dir, "config")
+	if err := os.MkdirAll(b.config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projects := filepath.Join(dir, "projects")
+	elsewhere := t.TempDir()
+	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
+	staleCandidate := at("projects/stale-app/node_modules")
+	recentCandidate := at("projects/recent-app/node_modules")
+	webCandidate := at("projects/web-app/node_modules")
+
+	// The snapshot is taken after the subtest has written its configuration,
+	// so the assertion is that the dry run left the Fixture as it stood.
+	unchanged := func(t *testing.T) func() {
+		t.Helper()
+		before := listing(t, dir)
+		return func() {
+			t.Helper()
+			for _, d := range differences(before, listing(t, dir)) {
+				t.Errorf("the Fixture changed during a dry run: %s", d)
+			}
+		}
+	}
+
+	t.Run("a missing file uses the current directory and the output says none", func(t *testing.T) {
+		saved := b.config
+		b.config = t.TempDir()
+		defer func() { b.config = saved }()
+		defer unchanged(t)()
+		planPath := filepath.Join(t.TempDir(), "plan.json")
+		got := b.run(t, projects, "clean", "--dry-run", "--plan", planPath)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+		}
+		if !strings.Contains(got.stdout, "Configuration\n  none\n") {
+			t.Errorf("stdout is\n%s\nwant Configuration none", got.stdout)
+		}
+		out := decodePlan(t, planPath)
+		if roots := out.Roots; len(roots) != 1 || !sameDir(t, roots[0], projects) {
+			t.Errorf("roots = %v, want %s", roots, projects)
+		}
+	})
+
+	t.Run("roots in the file are used in that order and the output names the file", func(t *testing.T) {
+		first := at("projects/recent-app")
+		second := at("projects/web-app")
+		file := writeConfig(t, b.config, "roots = ["+tomlPath(t, first)+", "+tomlPath(t, second)+"]\n")
+		defer unchanged(t)()
+		planPath := filepath.Join(t.TempDir(), "plan.json")
+		got := b.run(t, elsewhere, "clean", "--dry-run", "--plan", planPath)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+		}
+		if !strings.Contains(got.stdout, "Configuration\n  "+file+"\n") {
+			t.Errorf("stdout is\n%s\nwant the file %s", got.stdout, file)
+		}
+		out := decodePlan(t, planPath)
+		if len(out.Roots) != 2 || !sameDir(t, out.Roots[0], first) || !sameDir(t, out.Roots[1], second) {
+			t.Errorf("roots = %v, want %s then %s", out.Roots, first, second)
+		}
+		scanned := b.run(t, elsewhere, "scan", "--json")
+		if scanned.status != 0 || scanned.stderr != "" {
+			t.Fatalf("scan exit status %d, stderr %q", scanned.status, scanned.stderr)
+		}
+		report := decode(t, scanned)
+		if len(report.Roots) != 2 || !sameDir(t, report.Roots[0], first) || !sameDir(t, report.Roots[1], second) {
+			t.Errorf("scan roots = %v, want %s then %s", report.Roots, first, second)
+		}
+	})
+
+	t.Run("the command line wins, in the order given", func(t *testing.T) {
+		fileFirst := at("projects/web-app")
+		fileSecond := at("projects/recent-app")
+		cliFirst := at("projects/stale-app")
+		cliSecond := at("projects/recent-app")
+		writeConfig(t, b.config, "roots = ["+tomlPath(t, fileFirst)+", "+tomlPath(t, fileSecond)+"]\n")
+		defer unchanged(t)()
+		planPath := filepath.Join(t.TempDir(), "plan.json")
+		got := b.run(t, elsewhere, "clean", "--dry-run", "--plan", planPath, cliFirst, cliSecond)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+		}
+		out := decodePlan(t, planPath)
+		if len(out.Roots) != 2 || !sameDir(t, out.Roots[0], cliFirst) || !sameDir(t, out.Roots[1], cliSecond) {
+			t.Errorf("roots = %v, want %s then %s", out.Roots, cliFirst, cliSecond)
+		}
+		scanned := b.run(t, elsewhere, "scan", "--json", cliFirst, cliSecond)
+		if scanned.status != 0 || scanned.stderr != "" {
+			t.Fatalf("scan exit status %d, stderr %q", scanned.status, scanned.stderr)
+		}
+		report := decode(t, scanned)
+		if len(report.Roots) != 2 || !sameDir(t, report.Roots[0], cliFirst) || !sameDir(t, report.Roots[1], cliSecond) {
+			t.Errorf("scan roots = %v, want %s then %s", report.Roots, cliFirst, cliSecond)
+		}
+	})
+
+	t.Run("the current directory is the Root when the file names none", func(t *testing.T) {
+		file := writeConfig(t, b.config, "stale_days = 30\n")
+		defer unchanged(t)()
+		planPath := filepath.Join(t.TempDir(), "plan.json")
+		got := b.run(t, projects, "clean", "--dry-run", "--plan", planPath)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+		}
+		if !strings.Contains(got.stdout, "Configuration\n  "+file+"\n") {
+			t.Errorf("stdout is\n%s\nwant the file %s", got.stdout, file)
+		}
+		out := decodePlan(t, planPath)
+		if len(out.Roots) != 1 || !sameDir(t, out.Roots[0], projects) {
+			t.Errorf("roots = %v, want %s", out.Roots, projects)
+		}
+	})
+
+	t.Run("the stale threshold replaces 30 days", func(t *testing.T) {
+		for _, days := range []int{90, 0} {
+			t.Run(fmt.Sprintf("%d days", days), func(t *testing.T) {
+				writeConfig(t, b.config, "roots = ["+tomlPath(t, projects)+"]\nstale_days = "+fmt.Sprint(days)+"\n")
+				defer unchanged(t)()
+				planPath := filepath.Join(t.TempDir(), "plan.json")
+				got := b.run(t, elsewhere, "clean", "--dry-run", "--plan", planPath)
+				if got.status != 0 || got.stderr != "" {
+					t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+				}
+				out := decodePlan(t, planPath)
+				var want []string
+				for _, c := range key.Candidates {
+					path := at(c.Path)
+					if staleBefore(t, filepath.Dir(path), path, days) {
+						want = append(want, path)
+					}
+				}
+				if paths := planPaths(t, out); !sameSet(t, paths, want) {
+					t.Errorf("Plan paths = %v, want the Candidates whose Last used is before %d days ago: %v", paths, days, want)
+				}
+				for _, c := range out.Candidates {
+					onDisk := du(t, c.Path)
+					if c.Fingerprint.Size != onDisk {
+						t.Errorf("%s: Fingerprint Size = %d, and du -s gives %d", c.Path, c.Fingerprint.Size, onDisk)
+					}
+				}
+				for _, trap := range key.Traps {
+					if planHolds(t, out, at(trap.Path)) {
+						t.Errorf("the Trap %s is in the Plan", trap.Path)
+					}
+				}
+				for _, path := range []string{staleCandidate, recentCandidate} {
+					held := planHolds(t, out, path)
+					if held != staleBefore(t, filepath.Dir(path), path, days) {
+						t.Errorf("%s in the Plan = %v, and its modification time with %d days says otherwise", path, held, days)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("an ignored path and everything beneath it is never in the Plan", func(t *testing.T) {
+		staleProject := at("projects/stale-app")
+		file := writeConfig(t, b.config, "roots = ["+tomlPath(t, projects)+"]\nignore = ["+tomlPath(t, webCandidate)+", "+tomlPath(t, staleProject)+"]\n")
+		defer unchanged(t)()
+		hidden := []string{webCandidate, staleCandidate}
+		planPath := filepath.Join(t.TempDir(), "plan.json")
+		got := b.run(t, elsewhere, "clean", "--dry-run", "--plan", planPath, projects)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+		}
+		if !strings.Contains(got.stdout, "Configuration\n  "+file+"\n") {
+			t.Errorf("stdout is\n%s\nwant the file %s", got.stdout, file)
+		}
+		out := decodePlan(t, planPath)
+		for _, path := range hidden {
+			if planHolds(t, out, path) {
+				t.Errorf("the Plan holds %s, which is ignored", path)
+			}
+			if strings.Contains(got.stdout, path) {
+				t.Errorf("stdout names %s, which is ignored", path)
+			}
+		}
+		if !strings.Contains(got.stdout, recentCandidate) {
+			t.Errorf("stdout leaves out %s, and it was not ignored", recentCandidate)
+		}
+		scanned := b.run(t, elsewhere, "scan", "--json", projects)
+		if scanned.status != 0 || scanned.stderr != "" {
+			t.Fatalf("scan exit status %d, stderr %q", scanned.status, scanned.stderr)
+		}
+		report := decode(t, scanned)
+		for _, c := range report.Candidates {
+			for _, path := range hidden {
+				if sameDir(t, c.Path, path) {
+					t.Errorf("the Scan listed %s, which is ignored", c.Path)
+				}
+			}
+		}
+
+		for _, path := range hidden {
+			t.Run("pick "+filepath.Base(filepath.Dir(path)), func(t *testing.T) {
+				defer unchanged(t)()
+				picked := filepath.Join(t.TempDir(), "plan.json")
+				got := b.run(t, elsewhere, "clean", "--dry-run", "--plan", picked, "--pick", path, projects)
+				if got.status != 2 || got.stdout != "" {
+					t.Fatalf("exit status %d, stdout %q, stderr %q, want 2 and no Plan", got.status, got.stdout, got.stderr)
+				}
+				if !strings.Contains(got.stderr, path) {
+					t.Errorf("stderr = %q, want it to name %s", got.stderr, path)
+				}
+				if _, err := os.Lstat(picked); !os.IsNotExist(err) {
+					t.Errorf("wrote a Plan for an ignored path: %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("no key switches off a safety rule or makes delete the default", func(t *testing.T) {
+		for _, key := range []string{"git", "root", "fingerprint", "delete"} {
+			t.Run(key, func(t *testing.T) {
+				body := key + " = false\n"
+				if key == "delete" {
+					body = "delete = true\n"
+				}
+				file := writeConfig(t, b.config, body)
+				defer unchanged(t)()
+				planPath := filepath.Join(t.TempDir(), "plan.json")
+				got := b.run(t, projects, "clean", "--dry-run", "--plan", planPath)
+				if got.status != 2 || got.stdout != "" || !strings.Contains(got.stderr, file) || !strings.Contains(got.stderr, `"`+key+`"`) {
+					t.Fatalf("exit status %d, stderr %q, stdout %q, want status 2 naming %s and %s", got.status, got.stderr, got.stdout, file, key)
+				}
+				if _, err := os.Lstat(planPath); !os.IsNotExist(err) {
+					t.Errorf("wrote a Plan after rejecting the configuration: %v", err)
+				}
+			})
+		}
+	})
+}
+
 func TestDryRunWritesNoPlanWhenAPickedCandidateCannotBeRead(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("only an account that is not root can be refused a directory by its mode")
@@ -633,6 +869,16 @@ func decodePlan(t *testing.T, path string) planJSON {
 		t.Fatalf("version = %d, want 1", out.Version)
 	}
 	return out
+}
+
+func planHolds(t *testing.T, out planJSON, path string) bool {
+	t.Helper()
+	for _, c := range out.Candidates {
+		if sameDir(t, c.Path, path) {
+			return true
+		}
+	}
+	return false
 }
 
 func planPaths(t *testing.T, out planJSON) []string {
