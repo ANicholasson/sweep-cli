@@ -398,6 +398,39 @@ func TestDryRunKeepsThePlanPathTheUserNamed(t *testing.T) {
 	}
 }
 
+func TestDryRunRefusesAPlanAtAnotherSpellingOfACandidate(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	for _, rel := range []string{"real/app/package.json", "real/app/src/index.js", "real/app/node_modules/keep.txt"} {
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	via := filepath.Join(top, "via")
+	if err := os.Symlink(filepath.Join(top, "real"), via); err != nil {
+		if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+			t.Skipf("this account may not make a symlink: %v", err)
+		}
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(top, "real", "app", "node_modules", "plan.json")
+	got := b.run(t, top, "clean", "--dry-run", "--plan", planPath, filepath.Join(via, "app"))
+	if got.status != 2 {
+		t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+	}
+	if _, err := os.Lstat(planPath); !os.IsNotExist(err) {
+		t.Errorf("wrote the Plan inside the Candidate under another spelling: %v", err)
+	}
+}
+
 type planJSON struct {
 	Version    int      `json:"version"`
 	Roots      []string `json:"roots"`

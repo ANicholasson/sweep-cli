@@ -127,6 +127,7 @@ func measure(files scan.Files, path string) (scan.FileID, int64, time.Time, erro
 	if err != nil {
 		return scan.FileID{}, 0, time.Time{}, err
 	}
+	entered := map[scan.FileID]bool{space.File: true}
 	var entries int64
 	var walk func(string) error
 	walk = func(dir string) error {
@@ -146,10 +147,19 @@ func measure(files scan.Files, path string) (scan.FileID, int64, time.Time, erro
 			if mod.After(newest) {
 				newest = mod
 			}
-			if e.Is == scan.Dir {
-				if err := walk(e.Path); err != nil {
-					return err
-				}
+			if e.Is != scan.Dir {
+				continue
+			}
+			id, err := files.Space(e.Path)
+			if err != nil {
+				return err
+			}
+			if entered[id.File] {
+				continue
+			}
+			entered[id.File] = true
+			if err := walk(e.Path); err != nil {
+				return err
 			}
 		}
 		return nil

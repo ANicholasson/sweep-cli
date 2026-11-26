@@ -16,7 +16,6 @@ import (
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/ecosystems"
 	"github.com/ANicholasson/sweep-cli/internal/domain/plan"
-	"github.com/ANicholasson/sweep-cli/internal/domain/safety"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 	"github.com/ANicholasson/sweep-cli/internal/report"
 	"github.com/ANicholasson/sweep-cli/internal/system/docker"
@@ -203,43 +202,64 @@ func planDestination(path string) (write, real string, err error) {
 }
 
 func insideCandidate(dest string, candidates []domain.Candidate) (string, bool) {
+	disk := files.Disk{}
+	want := map[scan.FileID]string{}
 	for _, c := range candidates {
-		real, err := files.ResolveDir(c.Path)
+		space, err := disk.Space(c.Path)
 		if err != nil {
-			real = c.Path
+			continue
 		}
-		if safety.Beneath(real, dest, false) {
-			return c.Path, true
+		want[space.File] = c.Path
+	}
+	dir := dest
+	for {
+		next := filepath.Dir(dir)
+		if next == dir {
+			return "", false
+		}
+		dir = next
+		space, err := disk.Space(dir)
+		if err != nil {
+			return "", false
+		}
+		if path, ok := want[space.File]; ok {
+			return path, true
 		}
 	}
-	return "", false
 }
 
 var errNotPlan = errors.New("exists and is not a Plan")
 
-// writePlan creates path, or replaces it when it is already a Plan. An
-// existing file that is not a Plan is left as it was.
+// writePlan creates path, or replaces it when it is already a Plan. The
+// bytes are written and synced in a separate file first. path is replaced
+// only after that write finishes, so a failed write leaves an existing
+// Plan in place and does not create a file at path that is not a Plan.
 func writePlan(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	old, err := os.ReadFile(path)
 	if err == nil {
-		_, werr := f.Write(data)
-		cerr := f.Close()
-		if werr != nil {
-			return werr
+		if !plan.Is(old) {
+			return fmt.Errorf("%s %w", path, errNotPlan)
 		}
-		return cerr
-	}
-	if !errors.Is(err, os.ErrExist) {
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	old, err := os.ReadFile(path)
+	f, err := os.CreateTemp(filepath.Dir(path), ".sweep-plan-*")
 	if err != nil {
 		return err
 	}
-	if !plan.Is(old) {
-		return fmt.Errorf("%s %w", path, errNotPlan)
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
 	}
-	return os.WriteFile(path, data, 0o644)
+	cerr := f.Close()
+	if err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func say(stderr io.Writer, err error) {
