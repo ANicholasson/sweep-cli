@@ -85,12 +85,10 @@ func matchesAnswerKey(t *testing.T, dir string) {
 			t.Errorf("Candidate %s is something no Rule recognises", c.Path)
 		case kind != c.Kind:
 			t.Errorf("Candidate %s has Kind %q, but the Rule that recognises it names %q", c.Path, c.Kind, kind)
-		case c.Kind != domain.Dependencies.String():
-			t.Errorf("Candidate %s has Kind %q, want %q", c.Path, c.Kind, domain.Dependencies)
 		}
 	}
 
-	var outside, tracked, linked int
+	var outside, tracked, linked, bare int
 	for _, tr := range key.Traps {
 		if !isDir(dir, tr.Path) {
 			t.Errorf("Trap %s is not a directory in the Fixture", tr.Path)
@@ -99,19 +97,24 @@ func matchesAnswerKey(t *testing.T, dir string) {
 		if strings.TrimSpace(tr.Reason) == "" {
 			t.Errorf("Trap %s has no reason", tr.Path)
 		}
-		if _, ok := recognised(dir, tr.Path); !ok {
-			t.Errorf("Trap %s does not look like a Candidate: no Rule recognises it", tr.Path)
+		if _, ok := recognised(dir, tr.Path); ok {
+			switch {
+			case !beneath(tr.Path, key.Root):
+				outside++
+			case linkOnTheWay(dir, tr.Path):
+				linked++
+			case len(trackedFiles(t, dir, tr.Path)) > 0:
+				tracked++
+			default:
+				t.Errorf("Trap %s is beneath the Root, yet git tracks nothing in it and no Link leads to it", tr.Path)
+			}
+			continue
 		}
-		switch {
-		case !beneath(tr.Path, key.Root):
-			outside++
-		case linkOnTheWay(dir, tr.Path):
-			linked++
-		case len(trackedFiles(t, dir, tr.Path)) > 0:
-			tracked++
-		default:
-			t.Errorf("Trap %s is beneath the Root, yet git tracks nothing in it and no Link leads to it", tr.Path)
+		if candidateName(path.Base(tr.Path)) {
+			bare++
+			continue
 		}
+		t.Errorf("Trap %s matches no Rule, and its name is not a Rule's Candidate", tr.Path)
 	}
 	if outside == 0 {
 		t.Error("no Trap lies outside the Root")
@@ -121,6 +124,9 @@ func matchesAnswerKey(t *testing.T, dir string) {
 	}
 	if linked == 0 {
 		t.Error("no Trap is reached through a Link")
+	}
+	if bare == 0 {
+		t.Error("no Trap is a directory named like a Candidate with no Manifest beside it")
 	}
 }
 
@@ -245,6 +251,17 @@ func answers(t *testing.T, dir string) answerKey {
 		t.Fatalf("answer-key.json does not parse: %v", err)
 	}
 	return key
+}
+
+func candidateName(name string) bool {
+	for _, e := range ecosystems.All() {
+		for _, r := range e.Rules {
+			if w, ok := r.Where.(domain.InProject); ok && w.Candidate == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // recognised reports the Kind of the Rule that finds p the way a Scan would,
