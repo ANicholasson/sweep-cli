@@ -139,12 +139,12 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		return incomplete
 	}
-	dest, err := planDestination(*planPath)
+	dest, real, err := planDestination(*planPath)
 	if err != nil {
 		say(stderr, err)
 		return misused
 	}
-	if c, ok := insideCandidate(dest, result.Candidates); ok {
+	if c, ok := insideCandidate(real, result.Candidates); ok {
 		say(stderr, fmt.Errorf("the Plan would be written inside the Candidate %s", c))
 		return misused
 	}
@@ -170,34 +170,36 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	return done
 }
 
-// planDestination is the path the Plan file will occupy. Every Link on the
-// way is followed, so the path can be compared with a Candidate. The file
-// itself is refused when it is a Link.
-func planDestination(path string) (string, error) {
+// planDestination splits the Plan path into the path to create and the path
+// after every Link on the way. The created path keeps the caller's spelling,
+// so a directory that is only a Link to the same place is not rewritten.
+// The resolved path is what a Candidate is compared with. The file itself
+// is refused when it is a Link.
+func planDestination(path string) (write, real string, err error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	parent, base := filepath.Dir(abs), filepath.Base(abs)
 	resolved, err := files.ResolveDir(parent)
 	if err != nil {
-		return "", fmt.Errorf("%s cannot be written: %w", path, err)
+		return "", "", fmt.Errorf("%s cannot be written: %w", path, err)
 	}
-	dest := filepath.Join(resolved, base)
-	info, err := os.Lstat(dest)
+	real = filepath.Join(resolved, base)
+	info, err := os.Lstat(real)
 	if os.IsNotExist(err) {
-		return dest, nil
+		return abs, real, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("%s cannot be written: %w", path, err)
+		return "", "", fmt.Errorf("%s cannot be written: %w", path, err)
 	}
 	if info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-		return "", fmt.Errorf("%s is a Link", path)
+		return "", "", fmt.Errorf("%s is a Link", path)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("%s is a directory", path)
+		return "", "", fmt.Errorf("%s is a directory", path)
 	}
-	return dest, nil
+	return abs, real, nil
 }
 
 func insideCandidate(dest string, candidates []domain.Candidate) (string, bool) {

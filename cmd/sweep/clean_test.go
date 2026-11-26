@@ -358,6 +358,46 @@ func TestDryRunRefusesAPlanReachedThroughALinkAboveItsParent(t *testing.T) {
 	}
 }
 
+func TestDryRunKeepsThePlanPathTheUserNamed(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	for _, rel := range []string{"app/package.json", "app/src/index.js", "app/node_modules/keep.txt"} {
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(top, "out")
+	if err := os.Mkdir(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(top, "alias")
+	if err := os.Symlink(out, alias); err != nil {
+		if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+			t.Skipf("this account may not make a symlink: %v", err)
+		}
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(alias, "plan.json")
+	got := b.run(t, top, "clean", "--dry-run", "--plan", planPath, filepath.Join(top, "app"))
+	if got.status != 0 || got.stderr != "" {
+		t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+	}
+	if !strings.Contains(got.stdout, "Written to "+planPath) {
+		t.Errorf("stdout is\n%s\nwant the path that was named", got.stdout)
+	}
+	if _, err := os.Lstat(planPath); err != nil {
+		t.Errorf("the Plan was not written at the named path: %v", err)
+	}
+}
+
 type planJSON struct {
 	Version    int      `json:"version"`
 	Roots      []string `json:"roots"`
