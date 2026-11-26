@@ -26,13 +26,13 @@ func TrashContract(t *testing.T, open func(t *testing.T, tree Tree) (clean.Trash
 		file := named(t, view, top, "keep.txt")
 		id := identity(t, view, file)
 
-		if err := bin.Move(file); err != nil {
+		if err := bin.Move(top, file); err != nil {
 			t.Fatal(err)
 		}
 		if slices.Contains(entryNames(t, view, top), "keep.txt") {
 			t.Fatal("the file is still there")
 		}
-		if err := bin.Restore(file); err != nil {
+		if err := bin.Restore(top, file); err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Contains(entryNames(t, view, top), "keep.txt") {
@@ -50,7 +50,7 @@ func TrashContract(t *testing.T, open func(t *testing.T, tree Tree) (clean.Trash
 		dirID := identity(t, view, dir)
 		childID := identity(t, view, child)
 
-		if err := bin.Move(dir); err != nil {
+		if err := bin.Move(top, dir); err != nil {
 			t.Fatal(err)
 		}
 		if slices.Contains(entryNames(t, view, top), "dir") {
@@ -59,7 +59,7 @@ func TrashContract(t *testing.T, open func(t *testing.T, tree Tree) (clean.Trash
 		if _, err := view.List(dir); err == nil {
 			t.Fatal("the moved directory can still be listed")
 		}
-		if err := bin.Restore(dir); err != nil {
+		if err := bin.Restore(top, dir); err != nil {
 			t.Fatal(err)
 		}
 		if identity(t, view, dir) != dirID || identity(t, view, child) != childID {
@@ -77,7 +77,7 @@ func TrashContract(t *testing.T, open func(t *testing.T, tree Tree) (clean.Trash
 		if strings.Contains(top, `\`) {
 			missing = top + `\does-not-exist`
 		}
-		if err := bin.Move(missing); err == nil {
+		if err := bin.Move(top, missing); err == nil {
 			t.Fatal("Move of a missing path returned no error")
 		}
 		if got := entryNames(t, view, top); !slices.Equal(got, before) {
@@ -95,16 +95,16 @@ func TrashContract(t *testing.T, open func(t *testing.T, tree Tree) (clean.Trash
 		aID := identity(t, view, a)
 		bID := identity(t, view, b)
 
-		if err := bin.Move(a); err != nil {
+		if err := bin.Move(top, a); err != nil {
 			t.Fatal(err)
 		}
-		if err := bin.Move(b); err != nil {
+		if err := bin.Move(top, b); err != nil {
 			t.Fatal(err)
 		}
-		if err := bin.Restore(a); err != nil {
+		if err := bin.Restore(top, a); err != nil {
 			t.Fatal(err)
 		}
-		if err := bin.Restore(b); err != nil {
+		if err := bin.Restore(top, b); err != nil {
 			t.Fatal(err)
 		}
 		if identity(t, view, a) != aID || identity(t, view, b) != bID {

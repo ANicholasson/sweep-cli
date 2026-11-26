@@ -25,6 +25,10 @@ type binaries struct {
 	// there and never in the machine's own trash. Empty uses a fresh
 	// temporary directory.
 	data string
+	// pwd is the PWD a shell would export for the working directory. Empty
+	// leaves the environment's PWD. Set it when that directory is reached
+	// through a Link and the Plan should keep that spelling.
+	pwd string
 }
 
 func build(t *testing.T) binaries {
@@ -81,7 +85,11 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	if dataHome == "" {
 		dataHome = t.TempDir()
 	}
-	cmd.Env = pointUserDirs(os.Environ(), configHome, cacheHome, dataHome)
+	env := pointUserDirs(os.Environ(), configHome, cacheHome, dataHome)
+	if b.pwd != "" {
+		env = append(without(env, "PWD"), "PWD="+b.pwd)
+	}
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

@@ -493,7 +493,7 @@ func writePlan(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := trash.Place(tmp, path); err != nil {
 		return err
 	}
 	renamed = true

@@ -40,11 +40,12 @@ func Open() (Mover, error) {
 func In(dir string) Mover { return Mover{dir: dir} }
 
 // Move puts path in the trash. The info file is written first. path is
-// renamed onto the same file system, one component at a time, without
-// following a Link. A rename that fails, including one onto another file
+// renamed onto the same file system. A Link above root is followed,
+// because that is how the caller spelled the Root. A Link beneath root
+// is not followed. A rename that fails, including one onto another file
 // system, leaves path where it was. Move does not copy and it does not
 // delete path.
-func (m Mover) Move(path string) error {
+func (m Mover) Move(root, path string) error {
 	if m.dir == "" {
 		return ErrUnavailable
 	}
@@ -64,8 +65,9 @@ func (m Mover) Move(path string) error {
 		return err
 	}
 	dest := filepath.Join(m.dir, "files", name)
-	// The Candidate is not followed. The trash may sit behind a Link.
-	if err := renameBetween(abs, false, dest, true); err != nil {
+	// A Link above the Root is followed. A Link beneath it is not. The
+	// trash may sit behind a Link.
+	if err := renameBetween(abs, root, false, dest, "", true); err != nil {
 		_ = os.Remove(infoPath)
 		return err
 	}
@@ -74,7 +76,7 @@ func (m Mover) Move(path string) error {
 
 // Restore puts the most recent Move of path back. path must be gone from
 // where it was. The file in the trash keeps its identity.
-func (m Mover) Restore(path string) error {
+func (m Mover) Restore(root, path string) error {
 	if m.dir == "" {
 		return ErrUnavailable
 	}
@@ -93,8 +95,9 @@ func (m Mover) Restore(path string) error {
 		return err
 	}
 	src := filepath.Join(m.dir, "files", name)
-	// The trash may sit behind a Link. The Candidate's own path is not followed.
-	if err := renameBetween(src, true, abs, false); err != nil {
+	// The trash may sit behind a Link. The path is put back through the
+	// Root's spelling, and a Link beneath the Root is not followed.
+	if err := renameBetween(src, "", true, abs, root, false); err != nil {
 		return err
 	}
 	if err := os.Remove(infoPath); err != nil {
@@ -233,16 +236,17 @@ func unescape(s string) (string, error) {
 }
 
 // renameBetween renames oldpath to newpath. followOld and followNew say
-// whether a Link in that path, above the last component, may be followed.
-// The Candidate is never followed. The trash may be, because that is where
-// the file is going. The last component is renamed as itself.
-func renameBetween(oldpath string, followOld bool, newpath string, followNew bool) error {
-	oldfd, err := openParent(oldpath, followOld)
+// whether every Link in that path, above the last component, may be
+// followed. When follow is false, root is the Root: a Link above it is
+// followed and a Link beneath it is refused. The last component is
+// renamed as itself.
+func renameBetween(oldpath, oldRoot string, followOld bool, newpath, newRoot string, followNew bool) error {
+	oldfd, err := openParent(oldpath, oldRoot, followOld)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = syscall.Close(oldfd) }()
-	newfd, err := openParent(newpath, followNew)
+	newfd, err := openParent(newpath, newRoot, followNew)
 	if err != nil {
 		return err
 	}
@@ -253,12 +257,67 @@ func renameBetween(oldpath string, followOld bool, newpath string, followNew boo
 	return nil
 }
 
-func openParent(path string, follow bool) (int, error) {
+func openParent(path, root string, follow bool) (int, error) {
 	dir := filepath.Dir(path)
 	if follow {
 		return openDirFollow(dir)
 	}
-	return openDirNoFollow(dir)
+	return openBeneath(dir, root)
+}
+
+// openBeneath opens dir. A Link above root is followed, which is how a
+// Root that keeps the caller's spelling is reached. A Link at root or
+// beneath it is refused.
+func openBeneath(dir, root string) (int, error) {
+	dir = filepath.Clean(dir)
+	root = filepath.Clean(root)
+	if root == "" || !contains(root, dir) {
+		return openDirNoFollow(dir)
+	}
+	fd, err := openFinalNoFollow(root)
+	if err != nil {
+		return -1, err
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		_ = syscall.Close(fd)
+		return openDirNoFollow(dir)
+	}
+	if rel == "." {
+		return fd, nil
+	}
+	for _, name := range strings.Split(rel, string(filepath.Separator)) {
+		if name == "" || name == "." {
+			continue
+		}
+		next, err := syscall.Openat(fd, name, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+		_ = syscall.Close(fd)
+		if err != nil {
+			return -1, &os.PathError{Op: "open", Path: dir, Err: err}
+		}
+		fd = next
+	}
+	return fd, nil
+}
+
+// contains reports whether path is root or lies beneath it. The comparison
+// is the cleaned text, which is the spelling the Plan recorded.
+func contains(root, path string) bool {
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, root+string(filepath.Separator))
+}
+
+// openFinalNoFollow opens path and follows a Link above the last component.
+// A Link at the end fails the open. That is the same open a listing uses
+// for a Root.
+func openFinalNoFollow(path string) (int, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return fd, nil
 }
 
 // openDirFollow opens path and follows a Link on the way. It is used for

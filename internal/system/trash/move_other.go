@@ -16,7 +16,7 @@ func Open() (Mover, error) {
 func In(string) Mover { return Mover{} }
 
 // Move refuses. The path is not removed.
-func (Mover) Move(string) error { return ErrUnavailable }
+func (Mover) Move(string, string) error { return ErrUnavailable }
 
 // Restore refuses. There is no trash to restore from.
-func (Mover) Restore(string) error { return ErrUnavailable }
+func (Mover) Restore(string, string) error { return ErrUnavailable }

@@ -33,7 +33,7 @@ func TestTheTrashInfoNamesTheOriginalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := filepath.Join(dir, "Trash")
-	if err := In(home).Move(src); err != nil {
+	if err := In(home).Move(dir, src); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(src); !os.IsNotExist(err) {
@@ -50,7 +50,7 @@ func TestTheTrashInfoNamesTheOriginalPath(t *testing.T) {
 	if !strings.Contains(text, "Path="+escape(abs)) || !strings.Contains(escape(abs), "%20") {
 		t.Fatalf("Path = %q, want the space percent-encoded", escape(abs))
 	}
-	if err := In(home).Restore(src); err != nil {
+	if err := In(home).Restore(dir, src); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(src)
@@ -72,7 +72,7 @@ func TestAFailedMoveLeavesTheFile(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := In(filepath.Join(blocker, "Trash")).Move(src)
+	err := In(filepath.Join(blocker, "Trash")).Move(dir, src)
 	if err == nil {
 		t.Fatal("Move returned no error, and it must not delete the file instead")
 	}
@@ -100,7 +100,7 @@ func TestALinkAboveTheTrashStillReceivesTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := filepath.Join(link, "Trash")
-	err := In(home).Move(src)
+	err := In(home).Move(dir, src)
 	if err != nil {
 		if strings.Contains(err.Error(), "not a directory") {
 			t.Fatalf("a Link above the trash was refused as not a directory: %v", err)
@@ -110,7 +110,7 @@ func TestALinkAboveTheTrashStillReceivesTheFile(t *testing.T) {
 	if _, statErr := os.Lstat(src); !os.IsNotExist(statErr) {
 		t.Fatalf("the file is still at %s: %v", src, statErr)
 	}
-	if err := In(home).Restore(src); err != nil {
+	if err := In(home).Restore(dir, src); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(src)
@@ -135,7 +135,7 @@ func TestMoveDoesNotFollowALinkAboveTheFile(t *testing.T) {
 	if err := os.Symlink(real, filepath.Join(dir, "via")); err != nil {
 		t.Fatal(err)
 	}
-	err := In(filepath.Join(dir, "Trash")).Move(filepath.Join(dir, "via", "precious.txt"))
+	err := In(filepath.Join(dir, "Trash")).Move(dir, filepath.Join(dir, "via", "precious.txt"))
 	if err == nil {
 		t.Fatal("Move followed a Link")
 	}
@@ -145,6 +145,40 @@ func TestMoveDoesNotFollowALinkAboveTheFile(t *testing.T) {
 	}
 	if string(got) != "precious\n" {
 		t.Errorf("the file the Link leads to is %q", got)
+	}
+}
+
+func TestALinkAboveTheRootIsFollowed(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real", "projects", "web-app")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(real, "keep.txt")
+	if err := os.WriteFile(src, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "fx")); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "fx", "projects")
+	spelled := filepath.Join(root, "web-app", "keep.txt")
+	home := filepath.Join(dir, "Trash")
+	if err := In(home).Move(root, spelled); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(src); !os.IsNotExist(err) {
+		t.Fatalf("the file is still at %s: %v", src, err)
+	}
+	if err := In(home).Restore(root, spelled); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep\n" {
+		t.Errorf("restored %q, want the original bytes", got)
 	}
 }
 

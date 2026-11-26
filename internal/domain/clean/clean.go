@@ -16,9 +16,13 @@ import (
 // Trash moves a path into the operating system's trash, where it can be
 // restored. Move never deletes. When Move returns an error, the path is
 // still where it was.
+//
+// root is the Root the path was reached from. A Link above that Root may
+// be followed, because that is how the caller spelled it. A Link beneath
+// the Root is refused.
 type Trash interface {
-	Move(path string) error
-	Restore(path string) error
+	Move(root, path string) error
+	Restore(root, path string) error
 }
 
 // Rule is the Safety rule that made a Skip.
@@ -104,7 +108,8 @@ func Run(files scan.Files, git safety.Git, bin Trash, p plan.Plan) Result {
 	var out Result
 	for _, c := range p.Picked {
 		item := Item{Path: c.Path, Size: c.Fingerprint.Size}
-		switch reach(files, p.Roots, c.Path) {
+		root, how := reach(files, p.Roots, c.Path)
+		switch how {
 		case reachOutside, reachLink, reachBlocked:
 			out.Skipped = append(out.Skipped, Skip{Item: item, Rule: Root})
 			continue
@@ -121,7 +126,7 @@ func Run(files scan.Files, git safety.Git, bin Trash, p plan.Plan) Result {
 			out.Skipped = append(out.Skipped, Skip{Item: item, Rule: Fingerprint})
 			continue
 		}
-		if err := bin.Move(c.Path); err != nil {
+		if err := bin.Move(string(root), c.Path); err != nil {
 			out.Failed = append(out.Failed, Failure{Item: item, Err: err})
 			continue
 		}
@@ -133,23 +138,23 @@ func Run(files scan.Files, git safety.Git, bin Trash, p plan.Plan) Result {
 // reach walks from the shallowest Root that contains candidate, one
 // component at a time. It lists only a directory it has already seen is
 // not a Link, and it takes the next path from that listing.
-func reach(files scan.Files, roots []domain.Root, candidate string) reached {
+func reach(files scan.Files, roots []domain.Root, candidate string) (domain.Root, reached) {
 	root, ok := shallowest(roots, candidate)
 	if !ok {
-		return reachOutside
+		return "", reachOutside
 	}
 	parts, ok := steps(string(root), candidate)
 	if !ok {
-		return reachOutside
+		return "", reachOutside
 	}
 	current := string(root)
 	if len(parts) == 0 {
-		return listed(files, current)
+		return root, listed(files, current)
 	}
 	for i, name := range parts {
 		entries, err := files.List(current)
 		if err != nil {
-			return listedErr(err)
+			return "", listedErr(err)
 		}
 		var found scan.Entry
 		seen := false
@@ -161,22 +166,22 @@ func reach(files scan.Files, roots []domain.Root, candidate string) reached {
 			}
 		}
 		if !seen {
-			return reachGone
+			return "", reachGone
 		}
 		if found.Is == scan.Link {
-			return reachLink
+			return "", reachLink
 		}
 		if found.Is != scan.Dir && found.Is != scan.File {
-			return reachBlocked
+			return "", reachBlocked
 		}
 		if i < len(parts)-1 {
 			if found.Is != scan.Dir {
-				return reachGone
+				return "", reachGone
 			}
 			current = found.Path
 		}
 	}
-	return reachOK
+	return root, reachOK
 }
 
 func listed(files scan.Files, dir string) reached {

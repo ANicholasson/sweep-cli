@@ -130,7 +130,7 @@ func TestBoundaries(t *testing.T) {
 		{
 			name:  "through a dot import",
 			files: map[string]string{"internal/tui/tui.go": "package tui\n\nimport . \"os\"\n\nfunc clear(p string) { RemoveAll(p) }\n"},
-			want:  []string{`internal/tui/tui.go:3:10: only-trash-removes: dot-imports "os", which would let Remove, RemoveAll, Unlink, Unlinkat or Rmdir appear without a selector`},
+			want:  []string{`internal/tui/tui.go:3:10: only-trash-removes: dot-imports "os", which would let Remove, RemoveAll, Rename, Renameat, Unlink, Unlinkat or Rmdir appear without a selector`},
 		},
 		{
 			name:  "on an os.Root",
@@ -168,6 +168,21 @@ func TestBoundaries(t *testing.T) {
 			name:  "in a directory the go command ignores",
 			files: map[string]string{"tools/fixture/testdata/wipe.go": "package main\n\nimport \"os\"\n\nfunc main() { os.RemoveAll(\"/\") }\n"},
 			want:  []string{`tools/fixture/testdata/wipe.go:5:18: only-trash-removes: selects RemoveAll outside internal/system/trash`},
+		},
+		{
+			name: "a rename outside the trash",
+			files: map[string]string{
+				"cmd/sweep/main.go":                    "package main\n\nimport \"os\"\n\nfunc save(a, b string) error { return os.Rename(a, b) }\n",
+				"internal/system/files/files_linux.go": "package files\n\nimport \"syscall\"\n\nfunc save(fd int, a, b string) error { return syscall.Renameat(fd, a, fd, b) }\n",
+			},
+			want: []string{
+				`cmd/sweep/main.go:5:42: only-trash-removes: selects Rename outside internal/system/trash`,
+				`internal/system/files/files_linux.go:5:55: only-trash-removes: selects Renameat outside internal/system/trash`,
+			},
+		},
+		{
+			name:  "the trash adapter renames",
+			files: map[string]string{"internal/system/trash/place.go": "package trash\n\nimport (\n\t\"os\"\n\t\"syscall\"\n)\n\nfunc publish(a, b string) error { return os.Rename(a, b) }\nfunc shift(fd int, a, b string) error { return syscall.Renameat(fd, a, fd, b) }\n"},
 		},
 		{
 			name: "the trash adapter removes, on every operating system",

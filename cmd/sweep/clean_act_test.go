@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ANicholasson/sweep-cli/internal/system/trash"
 )
 
 func TestCleanMovesThePlanAndNothingElse(t *testing.T) {
@@ -70,14 +72,14 @@ func TestCleanMovesThePlanAndNothingElse(t *testing.T) {
 			if string(gotData) != string(data) {
 				t.Errorf("the trashed note is %q, want %q", gotData, data)
 			}
-			if err := os.Rename(landed, c.Path); err != nil {
+			if err := trash.Place(landed, c.Path); err != nil {
 				t.Fatal(err)
 			}
 			again, err := os.ReadFile(filepath.Join(c.Path, "fake-old", "note.txt"))
 			if err != nil || string(again) != string(data) {
 				t.Errorf("restoring %s gave %q, %v", c.Path, again, err)
 			}
-			if err := os.Rename(c.Path, landed); err != nil {
+			if err := trash.Place(c.Path, landed); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -190,7 +192,7 @@ func TestCleanSkipsWhenADirectoryAboveBecomesALink(t *testing.T) {
 	}
 	app := at("projects/stale-app")
 	held := app + ".held"
-	if err := os.Rename(app, held); err != nil {
+	if err := trash.Place(app, held); err != nil {
 		t.Fatal(err)
 	}
 	linkTo(t, at("outside/stash-app"), app)
@@ -277,6 +279,61 @@ func TestCleanRefusesAPlanPathThatIsNotClean(t *testing.T) {
 	}
 }
 
+func TestCleanFollowsALinkAboveTheRoot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux moves a Candidate to the trash")
+	}
+	b := build(t)
+	dir, _ := b.buildFixture(t)
+	b.data = filepath.Join(dir, "trash-home")
+	link := filepath.Join(t.TempDir(), "fx")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	cwd := filepath.Join(link, "projects", "web-app")
+	b.pwd = cwd
+	candidate := filepath.Join(cwd, "node_modules")
+	note := filepath.Join(candidate, "fake-alpha", "index.js")
+	saved, err := os.ReadFile(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(t.TempDir(), "plan.json")
+	dry := b.run(t, cwd, "clean", "--dry-run", "--plan", planPath, "--pick", "node_modules")
+	if dry.status != 0 || dry.stderr != "" {
+		t.Fatalf("dry run exit %d, stderr %q\n%s", dry.status, dry.stderr, dry.stdout)
+	}
+	planned := decodePlan(t, planPath)
+	if len(planned.Roots) != 1 || planned.Roots[0] != cwd {
+		t.Fatalf("roots = %q, want the spelled Root %s", planned.Roots, cwd)
+	}
+	if len(planned.Candidates) != 1 || planned.Candidates[0].Path != candidate {
+		t.Fatalf("candidates = %+v, want %s", planned.Candidates, candidate)
+	}
+	got := b.run(t, cwd, "clean", "--plan", planPath)
+	if got.status != 0 || strings.Contains(got.stdout, "not a directory") || strings.Contains(got.stderr, "not a directory") {
+		t.Fatalf("exit %d, stdout %q, stderr %q, want the Candidate moved", got.status, got.stdout, got.stderr)
+	}
+	if strings.Contains(strings.ToLower(got.stdout), "reclaimed") || !strings.Contains(got.stdout, "Moved to trash: 1") {
+		t.Errorf("stdout is\n%s", got.stdout)
+	}
+	if _, err := os.Lstat(candidate); !os.IsNotExist(err) {
+		t.Fatalf("the Candidate is still in place: %v", err)
+	}
+	landed := trashedCopy(t, b.data, candidate)
+	gotNote, err := os.ReadFile(filepath.Join(landed, "fake-alpha", "index.js"))
+	if err != nil || string(gotNote) != string(saved) {
+		t.Fatalf("the trashed file is %q, %v", gotNote, err)
+	}
+	if err := trash.Place(landed, candidate); err != nil {
+		t.Fatal(err)
+	}
+	back, err := os.ReadFile(note)
+	if err != nil || string(back) != string(saved) {
+		t.Errorf("putting the Candidate back gave %q, %v", back, err)
+	}
+}
+
 func TestCleanFollowsALinkAboveTheTrash(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("only Linux moves a Candidate to the trash")
@@ -316,7 +373,7 @@ func TestCleanFollowsALinkAboveTheTrash(t *testing.T) {
 	if err != nil || string(gotNote) != string(saved) {
 		t.Fatalf("the trashed note is %q, %v", gotNote, err)
 	}
-	if err := os.Rename(landed, stale); err != nil {
+	if err := trash.Place(landed, stale); err != nil {
 		t.Fatal(err)
 	}
 	back, err := os.ReadFile(note)

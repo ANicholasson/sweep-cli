@@ -36,7 +36,9 @@ func NewTrash(files *Files) *Trash {
 }
 
 // Move takes path out of Files. A path in Fail is left in place.
-func (t *Trash) Move(p string) error {
+// The first argument is the Root a real trash follows a Link down to.
+// The fake has no Links, so it is ignored.
+func (t *Trash) Move(_, p string) error {
 	if t.Before != nil {
 		t.Before(p)
 	}
@@ -67,7 +69,7 @@ func (t *Trash) Move(p string) error {
 }
 
 // Restore puts the most recent Move of p back into Files.
-func (t *Trash) Restore(p string) error {
+func (t *Trash) Restore(_, p string) error {
 	stack := t.held[p]
 	if len(stack) == 0 {
 		return &fs.PathError{Op: "restore", Path: p, Err: fs.ErrNotExist}

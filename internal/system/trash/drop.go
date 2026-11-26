@@ -13,3 +13,10 @@ func Drop(path string) error {
 	}
 	return err
 }
+
+// Place renames oldpath to newpath. A Plan is written to a temporary file
+// and then placed at its path. A test moves a directory the same way.
+// This package is the only one that renames a path.
+func Place(oldpath, newpath string) error {
+	return os.Rename(oldpath, newpath)
+}
