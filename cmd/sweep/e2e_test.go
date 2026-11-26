@@ -85,6 +85,10 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	if dataHome == "" {
 		dataHome = t.TempDir()
 	}
+	if runtime.GOOS == "darwin" && b.data != "" && b.config == "" {
+		configHome = dataHome
+		cacheHome = dataHome
+	}
 	env := pointUserDirs(os.Environ(), configHome, cacheHome, dataHome)
 	if b.pwd != "" {
 		env = append(without(env, "PWD"), "PWD="+b.pwd)
@@ -313,6 +317,10 @@ func TestTheRealWindowsCacheDirectoryIsDropped(t *testing.T) {
 	if n != 1 {
 		t.Errorf("%d cache directories in %v, want one", n, got)
 	}
+}
+
+func movesToTrash() bool {
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
 }
 
 func configurationFile(home string) string {

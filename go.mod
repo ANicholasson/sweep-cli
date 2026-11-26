@@ -2,4 +2,7 @@ module github.com/ANicholasson/sweep-cli
 
 go 1.27
 
-require github.com/pelletier/go-toml/v2 v2.4.3
+require (
+	github.com/pelletier/go-toml/v2 v2.4.3
+	golang.org/x/sys v0.39.0
+)

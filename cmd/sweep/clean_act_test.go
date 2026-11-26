@@ -13,8 +13,8 @@ import (
 )
 
 func TestCleanMovesThePlanAndNothingElse(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("only Linux moves a Candidate to the trash; other systems refuse a Clean")
+	if !movesToTrash() {
+		t.Skip("this operating system has no trash yet, so a Clean removes nothing")
 	}
 	b := build(t)
 	dir, key := b.buildFixture(t)
@@ -106,13 +106,16 @@ func TestCleanMovesThePlanAndNothingElse(t *testing.T) {
 }
 
 func TestCleanSkipsACandidateThatChangedAndTrashesTheRest(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("only Linux moves a Candidate to the trash; other systems refuse a Clean")
+	if !movesToTrash() {
+		t.Skip("this operating system has no trash yet, so a Clean removes nothing")
 	}
 	b := build(t)
 	dir, key := b.buildFixture(t)
 	b.data = filepath.Join(dir, "trash-home")
 	b.config = t.TempDir()
+	if runtime.GOOS == "darwin" {
+		b.config = b.data
+	}
 	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
 	projects := at(key.Root)
 	writeConfig(t, b.config, "roots = ["+tomlPath(t, projects)+"]\nstale_days = 0\n")
@@ -217,7 +220,7 @@ func TestCleanSkipsWhenADirectoryAboveBecomesALink(t *testing.T) {
 	if err != nil || string(afterHeld) != string(beforeHeld) {
 		t.Errorf("the Candidate that was renamed aside changed: %q, %v", afterHeld, err)
 	}
-	if runtime.GOOS != "linux" {
+	if !movesToTrash() {
 		if got.status != 2 || got.stdout != "" || !strings.Contains(got.stderr, "no trash") {
 			t.Fatalf("exit %d, stdout %q, stderr %q, want a refusal and nothing removed", got.status, got.stdout, got.stderr)
 		}
@@ -280,8 +283,8 @@ func TestCleanRefusesAPlanPathThatIsNotClean(t *testing.T) {
 }
 
 func TestCleanFollowsALinkAboveTheRoot(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("only Linux moves a Candidate to the trash")
+	if !movesToTrash() {
+		t.Skip("this operating system has no trash yet, so a Clean removes nothing")
 	}
 	b := build(t)
 	dir, _ := b.buildFixture(t)
@@ -335,8 +338,8 @@ func TestCleanFollowsALinkAboveTheRoot(t *testing.T) {
 }
 
 func TestCleanFollowsALinkAboveTheTrash(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("only Linux moves a Candidate to the trash")
+	if !movesToTrash() {
+		t.Skip("this operating system has no trash yet, so a Clean removes nothing")
 	}
 	b := build(t)
 	dir, key := b.buildFixture(t)
@@ -415,8 +418,8 @@ func TestCleanRefusesAMalformedPlan(t *testing.T) {
 }
 
 func TestCleanLeavesACandidateTheTrashRefuses(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("only Linux tries the trash; other systems refuse a Clean first")
+	if !movesToTrash() {
+		t.Skip("this operating system has no trash yet, so a Clean removes nothing")
 	}
 	b := build(t)
 	dir, key := b.buildFixture(t)
@@ -454,6 +457,11 @@ func TestCleanLeavesACandidateTheTrashRefuses(t *testing.T) {
 func trashedCopy(t *testing.T, dataHome, original string) string {
 	t.Helper()
 	info := filepath.Join(dataHome, "Trash", "info")
+	files := filepath.Join(dataHome, "Trash", "files")
+	if runtime.GOOS == "darwin" {
+		info = filepath.Join(dataHome, ".Trash", ".info")
+		files = filepath.Join(dataHome, ".Trash")
+	}
 	entries, err := os.ReadDir(info)
 	if err != nil {
 		t.Fatal(err)
@@ -468,7 +476,7 @@ func trashedCopy(t *testing.T, dataHome, original string) string {
 			t.Fatal(err)
 		}
 		if strings.Contains(string(data), "Path="+abs+"\n") {
-			return filepath.Join(dataHome, "Trash", "files", strings.TrimSuffix(e.Name(), ".trashinfo"))
+			return filepath.Join(files, strings.TrimSuffix(e.Name(), ".trashinfo"))
 		}
 	}
 	t.Fatalf("%s is not in the trash", original)

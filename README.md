@@ -108,8 +108,11 @@ Link is a Skip. A Candidate that holds a directory sweep cannot read is a
 Skip under the Git rule, because a repository with tracked files could be
 inside it. Every other Candidate is moved to the trash. On Linux that is
 `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash` when `XDG_DATA_HOME` is
-unset. A Candidate the trash cannot take is reported as a failure and left
-in place. sweep does not delete it, and the rest of the Plan continues.
+unset. On macOS a Candidate on the same volume as the home directory goes
+to `~/.Trash`, and one on another volume goes to that volume's
+`.Trashes/<user id>`. A Candidate the trash cannot take is reported as a
+failure and left in place. sweep does not delete it, and the rest of the
+Plan continues.
 The summary lists what was moved to the trash, what was skipped and what
 failed. Space that was moved is not called reclaimed.
 
@@ -117,7 +120,7 @@ The exit status is 0 when every Candidate in the Plan was moved, 1 when a
 Candidate was skipped or could not be moved, and 2 when the Plan is missing
 from the command, is malformed or has an unknown version, a Root or a
 Candidate is not a clean absolute path, or this operating system has no
-trash yet. macOS and Windows refuse before anything is moved.
+trash yet. Windows refuses before anything is moved.
 A refused Clean removes nothing.
 
 ## Safety rules
