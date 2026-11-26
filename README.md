@@ -64,21 +64,27 @@ nothing is scanned.
 
     sweep clean --dry-run [--plan file] [--pick path] [Root...]
 
-`sweep clean --dry-run` picks every Stale Candidate beneath the Roots you
-gave and writes a Plan. It prints each Candidate as `picked: Stale` or
-`not picked: used recently`, with its Size, Kind and path. The Plan is a
-JSON file with a `version` field. It records the Roots and each picked
-Candidate with its Fingerprint: the file identity of the Candidate, the
-number of directory entries inside it, its Size and its newest
-modification. A Link counts as one entry and is not followed. The default
-file is `sweep/plan.json` in the operating system's per-user cache
-directory: `$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches`
-on macOS, and `%LocalAppData%` on Windows. The dry run prints that full
-path. `--plan` names another file. The Plan is never written inside a
-Candidate, and `--plan` with a path inside a Project the Scan found is
-refused before anything is written. A file that already exists is
-replaced only when it is an earlier Plan. Any other existing file is left
-as it was, and the dry run writes nothing. `--pick` adds one
+`sweep clean --dry-run` reads the same configuration file a Scan reads.
+Roots come from the command line first, then the file, then the current
+directory. The file's Stale threshold decides what is Stale. A path on the
+Ignore list, and everything beneath it, is left out, so a Plan never holds
+one. A Candidate that holds an Ignore path is left out for the same
+reason. `--pick` of such a path is refused, and the message names the path.
+It prints the configuration file it read, or `none`, and the Roots it used.
+It picks every Stale Candidate and writes a Plan. It prints each Candidate
+as `picked: Stale` or `not picked: used recently`, with its Size, Kind and
+path. The Plan is a JSON file with a `version` field. It records the
+Roots and each picked Candidate with its Fingerprint: the file identity
+of the Candidate, the number of directory entries inside it, its Size and
+its newest modification. A Link counts as one entry and is not followed.
+The default file is `sweep/plan.json` in the operating system's per-user
+cache directory: `$XDG_CACHE_HOME` or `~/.cache` on Linux,
+`~/Library/Caches` on macOS, and `%LocalAppData%` on Windows. The dry run
+prints that full path. `--plan` names another file. The Plan is never
+written inside a Candidate, an Ignore path, or a Project the Scan found.
+That refusal happens before anything is written. A file that already
+exists is replaced only when it is an earlier Plan. Any other existing
+file is left as it was, and the dry run writes nothing. `--pick` adds one
 Candidate the default Pick left out. Nothing is removed. The run ends with
 how many Candidates and how much Size are in the Plan, what was left out,
 and how to add it with `--pick`.
@@ -86,8 +92,9 @@ and how to add it with `--pick`.
 The exit status is 0 when the Plan is written and the dry run read
 everything, 1 when something could not be read or the Plan or the output
 could not be written, and 2 when the command line is wrong, a Root is not
-a directory, a `--pick` path is not a Candidate, or the Plan would be
-written inside a Candidate or a Project. A usage error writes no Plan.
+a directory, the configuration file is rejected, a `--pick` path is not a
+Candidate (including one on the Ignore list), or the Plan would be written
+inside a Candidate, an Ignore path, or a Project. A usage error writes no Plan.
 
 ## Safety rules
 

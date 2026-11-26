@@ -66,13 +66,16 @@ func Scan(w io.Writer, result scan.Result, format Format) error {
 	return err
 }
 
-func table(out *bytes.Buffer, result scan.Result) {
+func writeConfiguration(out *bytes.Buffer, path string) {
 	out.WriteString("Configuration\n")
-	file := result.Configuration
-	if file == "" {
-		file = "none"
+	if path == "" {
+		path = "none"
 	}
-	fmt.Fprintf(out, "  %s\n\n", file)
+	fmt.Fprintf(out, "  %s\n\n", path)
+}
+
+func table(out *bytes.Buffer, result scan.Result) {
+	writeConfiguration(out, result.Configuration)
 	out.WriteString("Roots\n")
 	for _, root := range result.Roots {
 		fmt.Fprintf(out, "  %s\n", root)

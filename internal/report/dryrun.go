@@ -11,12 +11,16 @@ import (
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 )
 
-// DryRun writes what a dry run decided. The Roots come first. Each
+// DryRun writes what a dry run decided. The configuration file comes
+// first, or none when there was no file. The Roots come next. Each
 // Candidate is then printed under "picked: <reason>" or "not picked:
 // <reason>", with its Size, Kind and path. The report ends with how many
 // Candidates and how much Size are in the Plan, the file the Plan was
 // written to, what was left out, and, when something was left out, how to
 // add it. A path the Scan could not read is listed last, as a Scan lists it.
+//
+//	Configuration
+//	  /config/sweep/config.toml
 //
 //	Roots
 //	  /work/projects
@@ -35,6 +39,7 @@ import (
 //	To add one, pass --pick and its path.
 func DryRun(w io.Writer, result scan.Result, choices []plan.Choice, dest string) error {
 	var out bytes.Buffer
+	writeConfiguration(&out, result.Configuration)
 	out.WriteString("Roots\n")
 	for _, root := range result.Roots {
 		fmt.Fprintf(&out, "  %s\n", root)
