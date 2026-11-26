@@ -153,8 +153,11 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		say(stderr, err)
 		return incomplete
 	}
-	if err := os.WriteFile(dest, data, 0o644); err != nil {
+	if err := writePlan(dest, data); err != nil {
 		say(stderr, err)
+		if errors.Is(err, errNotPlan) {
+			return misused
+		}
 		return incomplete
 	}
 	if err := report.DryRun(stdout, result, choices, dest); err != nil {
@@ -167,16 +170,16 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	return done
 }
 
-// planDestination is the path the Plan file will occupy. A Link is not
-// followed: the file is refused when it is a Link, and its parent is
-// resolved so a Link on the way cannot place the file somewhere else.
+// planDestination is the path the Plan file will occupy. Every Link on the
+// way is followed, so the path can be compared with a Candidate. The file
+// itself is refused when it is a Link.
 func planDestination(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	parent, base := filepath.Dir(abs), filepath.Base(abs)
-	resolved, err := files.Resolve(parent)
+	resolved, err := files.ResolveDir(parent)
 	if err != nil {
 		return "", fmt.Errorf("%s cannot be written: %w", path, err)
 	}
@@ -199,11 +202,42 @@ func planDestination(path string) (string, error) {
 
 func insideCandidate(dest string, candidates []domain.Candidate) (string, bool) {
 	for _, c := range candidates {
-		if safety.Beneath(c.Path, dest, false) {
+		real, err := files.ResolveDir(c.Path)
+		if err != nil {
+			real = c.Path
+		}
+		if safety.Beneath(real, dest, false) {
 			return c.Path, true
 		}
 	}
 	return "", false
+}
+
+var errNotPlan = errors.New("exists and is not a Plan")
+
+// writePlan creates path, or replaces it when it is already a Plan. An
+// existing file that is not a Plan is left as it was.
+func writePlan(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err == nil {
+		_, werr := f.Write(data)
+		cerr := f.Close()
+		if werr != nil {
+			return werr
+		}
+		return cerr
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !plan.Is(old) {
+		return fmt.Errorf("%s %w", path, errNotPlan)
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func say(stderr io.Writer, err error) {

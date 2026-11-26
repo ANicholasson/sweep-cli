@@ -169,6 +169,45 @@ func TestDryRunOfTheFixture(t *testing.T) {
 		}
 	})
 
+	t.Run("an existing file that is not a Plan is left unchanged", func(t *testing.T) {
+		manifest := at("projects/tracked-app/package.json")
+		before, err := os.ReadFile(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := b.run(t, dir, "clean", "--dry-run", "--plan", manifest, root)
+		if got.status != 2 {
+			t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+		}
+		if got.stdout != "" {
+			t.Errorf("stdout = %q, want nothing", got.stdout)
+		}
+		if !strings.Contains(got.stderr, "not a Plan") {
+			t.Errorf("stderr = %q, want it to say the file is not a Plan", got.stderr)
+		}
+		after, err := os.ReadFile(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Errorf("the file changed from %q to %q", before, after)
+		}
+	})
+
+	t.Run("a second dry run replaces the Plan", func(t *testing.T) {
+		planPath := filepath.Join(t.TempDir(), "plan.json")
+		for range 2 {
+			got := b.run(t, dir, "clean", "--dry-run", "--plan", planPath, root)
+			if got.status != 0 || got.stderr != "" {
+				t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
+			}
+		}
+		out := decodePlan(t, planPath)
+		if paths := planPaths(t, out); !sameSet(t, paths, stale) {
+			t.Errorf("Plan paths = %v, want %v", paths, stale)
+		}
+	})
+
 	t.Run("sweep clean without --dry-run is a usage error", func(t *testing.T) {
 		got := b.run(t, dir, "clean")
 		if got.status != 2 {
@@ -282,6 +321,40 @@ func TestDryRunFingerprintDoesNotFollowALink(t *testing.T) {
 	}
 	if c.Fingerprint.Size >= 1<<20 {
 		t.Errorf("Size = %d, which is the file the Link leads to", c.Fingerprint.Size)
+	}
+}
+
+func TestDryRunRefusesAPlanReachedThroughALinkAboveItsParent(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	for _, rel := range []string{"app/package.json", "app/src/index.js", "app/node_modules/keep.txt", "app/node_modules/subdir/keep.txt"} {
+		p := filepath.Join(top, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidate := filepath.Join(top, "app", "node_modules")
+	alias := filepath.Join(top, "app", "alias")
+	if err := os.Symlink(candidate, alias); err != nil {
+		if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+			t.Skipf("this account may not make a symlink: %v", err)
+		}
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(alias, "subdir", "plan.json")
+	got := b.run(t, top, "clean", "--dry-run", "--plan", planPath, filepath.Join(top, "app"))
+	if got.status != 2 {
+		t.Fatalf("exit status %d, want 2, stderr %q", got.status, got.stderr)
+	}
+	if _, err := os.Lstat(filepath.Join(candidate, "subdir", "plan.json")); !os.IsNotExist(err) {
+		t.Errorf("wrote the Plan inside the Candidate through a Link: %v", err)
 	}
 }
 

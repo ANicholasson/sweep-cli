@@ -184,6 +184,17 @@ type identityV1 struct {
 	File   uint64 `json:"file"`
 }
 
+// Is reports whether data is a version 1 Plan and nothing else.
+func Is(data []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var out planV1
+	if err := dec.Decode(&out); err != nil || out.Version != 1 || dec.More() {
+		return false
+	}
+	return true
+}
+
 // Marshal writes a Plan as version 1 JSON. The bytes end with a newline.
 func Marshal(p Plan) ([]byte, error) {
 	out := planV1{Version: 1, Roots: []string{}, Candidates: []pickedV1{}}

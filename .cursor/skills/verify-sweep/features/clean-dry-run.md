@@ -6,7 +6,8 @@
 
 - `default` writes a Plan of the Stale Candidates.
 - `pick` adds a Candidate that is not Stale.
-- `inside` refuses a Plan path inside a Candidate.
+- `inside` refuses a Plan path inside a Candidate, including one reached through a Link above the file's parent.
+- `existing` refuses a file that already exists and is not a Plan.
 - `usage` rejects `sweep clean` without `--dry-run`.
 
 ## How to get to it (user POV)
@@ -26,6 +27,7 @@ Preconditions:
 - **Default Pick.** Run `"$H" run "$RUN" clean/default -- clean --dry-run --plan "$RUN/scratch/plan.json" projects`. Exit status `0`, stderr empty. stdout has `picked: Stale` and, under it, `projects/stale-app/node_modules`. It has `not picked: used recently` and, under it, the other four Candidates from the Answer key. It ends with `1 Candidate in the Plan`, a Size, `Written to $RUN/scratch/plan.json`, `Left out 4 Candidates`, and `To add one, pass --pick and its path.` The Plan file is JSON `version` 1. Its `roots` entry is the `projects` directory. Its `candidates` paths are exactly `projects/stale-app/node_modules` and no Trap. That Candidate's Fingerprint `size` equals `"$H" du "$RUN" "$RUN/fixture/projects/stale-app/node_modules"`. `fixture-changes.txt` is empty.
 - **Pick.** Run `"$H" run "$RUN" clean/pick -- clean --dry-run --plan "$RUN/scratch/picked.json" --pick projects/recent-app/node_modules projects`. Exit status `0`, stderr empty. The Plan's paths are `projects/stale-app/node_modules` and `projects/recent-app/node_modules`. stdout has `picked: named with --pick` and, under it, the recent Candidate. `fixture-changes.txt` is empty.
 - **Inside a Candidate.** Run `"$H" run "$RUN" clean/inside -C projects/stale-app/node_modules -- clean --dry-run "$RUN/fixture/projects"`. Exit status `2`, stdout empty, stderr names that Candidate. `projects/stale-app/node_modules/sweep-plan.json` does not exist. `fixture-changes.txt` is empty.
+- **Existing file.** Run `"$H" run "$RUN" clean/existing -- clean --dry-run --plan projects/tracked-app/package.json projects`. Exit status `2`, stdout empty, stderr says the file is not a Plan. `projects/tracked-app/package.json` is unchanged. `fixture-changes.txt` is empty.
 - **Usage.** Run `"$H" run "$RUN" clean/usage -- clean`. Exit status `2`, stdout empty, stderr contains `--dry-run`. `sweep-plan.json` does not exist in the Fixture. `fixture-changes.txt` is empty.
 
 ## Gotchas

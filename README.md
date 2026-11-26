@@ -50,7 +50,10 @@ Candidate with its Fingerprint: the file identity of the Candidate, the
 number of directory entries inside it, its Size and its newest
 modification. A Link counts as one entry and is not followed. The default
 file is `sweep-plan.json` in the current directory, and `--plan` names
-another. The Plan is never written inside a Candidate. `--pick` adds one
+another. The Plan is never written inside a Candidate. A file that already
+exists is replaced only when it is an earlier Plan. Any other existing
+file is left as it was, and the dry run writes nothing. A new Plan file
+inside a Project changes that Project's Last used. `--pick` adds one
 Candidate the default Pick left out. Nothing is removed. The run ends with
 how many Candidates and how much Size are in the Plan, what was left out,
 and how to add it with `--pick`.
