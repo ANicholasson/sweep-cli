@@ -21,7 +21,7 @@ A Scan adds each known Shared cache as a Root inside the home directory, without
 Preconditions:
 
 - Baseline preconditions from the [index](./README.md) hold.
-- The npm cache path below is `$RUN/fixture/home/.npm/_cacache` on Linux and macOS, and `$RUN/fixture/home/AppData/Local/npm-cache/_cacache` on Windows. `"$H" du "$RUN"` of that path is its Size.
+- The npm cache path below is `$RUN/scratch/home/.npm/_cacache` on Linux and macOS, and `$RUN/scratch/home/AppData/Local/npm-cache/_cacache` on Windows. `"$H" du "$RUN"` of that path is its Size. The Fixture holds the same tree at `$RUN/fixture/home`.
 - The configuration directory for the setting step is `$RUN/scratch/config`. On Linux, `XDG_CONFIG_HOME` is that directory.
 
 - **Found.** Run `"$H" run "$RUN" scan-shared/found -- scan projects`. Exit status `0`, stderr empty. stdout has `Roots`, the `projects` Root, the npm cache path followed by `added by sweep`, a `Shared caches` heading, and a row for the cache with Kind `Cache`. `fixture-changes.txt` is empty.
@@ -35,7 +35,7 @@ Preconditions:
 
 ## Gotchas
 
-- The helper sets `HOME` and `USERPROFILE` to `$RUN/fixture/home`. A Root outside `$RUN` means that did not happen.
+- The helper sets `HOME` and `USERPROFILE` to `$RUN/scratch/home`. A Root outside `$RUN` means that did not happen. A dry run's default Plan is under that home, not in the Fixture.
 - The cache is stale because its files are old, and it is still not in the default Pick.
 - `--pick-caches` names an Ecosystem, `Node`, not a path. `--pick` of the cache path also puts it in the Plan.
-- On macOS the setting step's configuration file is under `$RUN/fixture/home/Library/Application Support/sweep`, because the helper's `HOME` is that home directory.
+- On macOS the setting step's configuration file is under `$RUN/scratch/home/Library/Application Support/sweep`, because the helper's `HOME` is that home directory.

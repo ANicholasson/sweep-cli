@@ -112,15 +112,17 @@ type Settings struct {
 // It cannot fail. What it could not read is in the Result.
 func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosystems []domain.Ecosystem, now time.Time, settings Settings) Result {
 	s := scanner{
-		files:  files,
-		git:    git,
-		rules:  index(ecosystems),
-		caches: map[string]placed{},
-		walked: map[FileID]bool{},
-		listed: map[FileID]bool{},
-		inside: map[FileID]bool{},
-		ignore: settings.Ignore,
-		formOf: map[string]string{},
+		files:         files,
+		git:           git,
+		rules:         index(ecosystems),
+		caches:        map[string]placed{},
+		cacheID:       map[FileID]placed{},
+		fileCandidate: map[string]bool{},
+		walked:        map[FileID]bool{},
+		listed:        map[FileID]bool{},
+		inside:        map[FileID]bool{},
+		ignore:        settings.Ignore,
+		formOf:        map[string]string{},
 	}
 	roots = slices.Clone(roots)
 	var added []domain.Root
@@ -168,9 +170,12 @@ func (s *scanner) placeCaches(ecosystems []domain.Ecosystem, home string, given 
 			s.caches[full] = got
 			space, err := s.files.Space(full)
 			if err != nil {
-				s.unread(full, err)
+				if !s.ignored(full) {
+					s.unread(full, err)
+				}
 				continue
 			}
+			s.cacheID[space.File] = got
 			if s.knownRoot(given, space.File, got) {
 				continue
 			}
@@ -199,17 +204,19 @@ func (s *scanner) knownRoot(given []domain.Root, id FileID, got placed) bool {
 // insideHome is location as a directory inside home, spelled the way the
 // files adapter spells it. It is false when location is not a clean
 // slash-separated path inside the home directory, when any step leaves
-// home, and when the directory is missing. A directory on the way that
-// cannot be read is recorded, and then the cache is not added.
+// home, when the directory is missing, and when the directory or a parent
+// is on the Ignore list. An Ignore path is not read and its failure is
+// not reported. Any other directory on the way that cannot be read is
+// recorded, and then the cache is not added.
 func (s *scanner) insideHome(home, location string) (string, bool) {
-	if !cleanRelative(location) {
+	if !cleanRelative(location) || s.ignored(home) {
 		return "", false
 	}
 	cur := home
 	for _, part := range strings.Split(location, "/") {
 		entries, err := s.files.List(cur)
 		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
+			if !errors.Is(err, fs.ErrNotExist) && !s.ignored(cur) {
 				s.unread(cur, err)
 			}
 			return "", false
@@ -222,7 +229,7 @@ func (s *scanner) insideHome(home, location string) (string, bool) {
 				break
 			}
 		}
-		if !found || next.Is != Dir || !safety.Beneath(home, next.Path, false) || next.Path == home {
+		if !found || next.Is != Dir || s.ignored(next.Path) || !safety.Beneath(home, next.Path, false) || next.Path == home {
 			return "", false
 		}
 		cur = next.Path
@@ -230,8 +237,7 @@ func (s *scanner) insideHome(home, location string) (string, bool) {
 	return cur, true
 }
 
-func (s *scanner) shared(root, path string) {
-	c := s.caches[path]
+func (s *scanner) shared(root, path string, c placed) {
 	space, err := s.files.Space(path)
 	if err != nil {
 		s.unread(path, err)
@@ -252,7 +258,7 @@ func (s *scanner) shared(root, path string) {
 		return
 	}
 	for _, e := range entries {
-		if e.Is == Link || (e.Is != Dir && e.Is != File) || !safety.Beneath(root, e.Path, false) {
+		if s.ignored(e.Path) || e.Is == Link || (e.Is != Dir && e.Is != File) || !safety.Beneath(root, e.Path, false) {
 			continue
 		}
 		s.candidate(root, e, c.recogniser, "")
@@ -294,15 +300,17 @@ func sameName(name, part string) bool {
 }
 
 type scanner struct {
-	files  Files
-	git    safety.Git
-	rules  rules
-	caches map[string]placed
-	walked map[FileID]bool
-	listed map[FileID]bool
-	inside map[FileID]bool
-	ignore []string
-	formOf map[string]string
+	files         Files
+	git           safety.Git
+	rules         rules
+	caches        map[string]placed
+	cacheID       map[FileID]placed
+	fileCandidate map[string]bool
+	walked        map[FileID]bool
+	listed        map[FileID]bool
+	inside        map[FileID]bool
+	ignore        []string
+	formOf        map[string]string
 
 	found      []found
 	unreadable []Unreadable
@@ -323,13 +331,20 @@ func (s *scanner) enter(root, path string) {
 	if s.ignored(path) || !safety.Beneath(root, path, false) {
 		return
 	}
-	if _, ok := s.caches[path]; ok {
-		s.shared(root, path)
+	if c, ok := s.caches[path]; ok {
+		s.shared(root, path, c)
 		return
 	}
 	space, err := s.files.Space(path)
 	if err != nil {
 		s.unread(path, err)
+		return
+	}
+	// Another spelling of a Shared cache, such as a Root that reaches the
+	// home directory through a Link, is the same directory. Recognise it
+	// before the walk marks it seen and then skips the added Root.
+	if c, ok := s.cacheID[space.File]; ok {
+		s.shared(root, path, c)
 		return
 	}
 	if s.walked[space.File] {
@@ -366,9 +381,17 @@ func (s *scanner) candidate(root string, dir Entry, r recogniser, project string
 	if safety.Keeps(s.git, dir.Path) {
 		return
 	}
+	measured := domain.Size(space.Bytes)
+	if dir.Is == File {
+		// A file is its own Size. Listing it fails, and that failure is
+		// not a directory the Scan could not read.
+		s.fileCandidate[dir.Path] = true
+	} else {
+		measured = s.size(root, dir.Path, space)
+	}
 	s.found = append(s.found, found{space.File, domain.Candidate{
 		Path:      dir.Path,
-		Size:      s.size(root, dir.Path, space),
+		Size:      measured,
 		Ecosystem: r.ecosystem,
 		Rule:      r.rule,
 		Project:   project,
@@ -388,7 +411,15 @@ func (s *scanner) stamp(candidates []domain.Candidate, skip map[FileID]bool, now
 		c := &candidates[i]
 		var used time.Time
 		var blocked bool
-		if c.Project == "" {
+		if s.fileCandidate[c.Path] {
+			mod, err := s.files.Modified(c.Path)
+			if err != nil {
+				s.missed(c.Path, err)
+				blocked = true
+			} else {
+				used = mod
+			}
+		} else if c.Project == "" {
 			used, blocked = s.newest(c.Path, nil)
 		} else if got, ok := known[c.Project]; ok {
 			used, blocked = got.at, got.blocked

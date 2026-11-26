@@ -39,7 +39,7 @@ Preconditions:
 
 ## Gotchas
 
-- The steps read the real configuration file unless the configuration directory is the scratch one named above. A Root outside `$RUN` means the real file was read. The helper sets `HOME` to `$RUN/fixture/home`. On macOS the configuration file is under that home's `Library/Application Support/sweep`. On Windows `AppData` is still the configuration directory the step points at.
+- The steps read the real configuration file unless the configuration directory is the scratch one named above. A Root outside `$RUN` means the real file was read. The helper sets `HOME` to `$RUN/scratch/home`. On macOS the configuration file is under that home's `Library/Application Support/sweep`. On Windows `AppData` is still the configuration directory the step points at.
 - `stale_days` is a number of days. `90` makes the Fixture's 60-day Project not Stale. The default `30` would mark it Stale.
 - A Root on the command line replaces the file's Roots and does not turn Ignore off.
 - Paths in the file are absolute. A relative path is an error and nothing is scanned.

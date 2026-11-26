@@ -145,6 +145,13 @@ cmd_launch() {
 	(cd "$checkout" && go env GOEXE) > "$run/goexe"
 	(cd "$checkout" && go build -o "$(exe "$run" sweep)" ./cmd/sweep && go build -o "$(exe "$run" fixture)" ./tools/fixture)
 	"$(exe "$run" fixture)" "$run/fixture"
+	# The home directory a run uses is under scratch, not inside the
+	# Fixture. On macOS the default Plan is under HOME, and a dry run must
+	# not write that into the Fixture. The copy keeps the npm cache findable.
+	mkdir -p "$run/scratch/home"
+	if [ -d "$run/fixture/home" ]; then
+		cp -a "$run/fixture/home/." "$run/scratch/home/"
+	fi
 	checkout_state "$checkout" > "$run/checkout-state"
 	listing "$run/fixture" > "$run/evidence/fixture-listing-built.txt"
 	cp "$run/fixture/answer-key.json" "$run/evidence/answer-key.json"
@@ -210,9 +217,9 @@ cmd_run() {
 	listing "$run/fixture" > "$out/fixture-before.txt"
 	touch "$out/.started"
 	set +e
-	# Shared caches are Roots inside the home directory. The Fixture's home
-	# is the only home a run may use.
-	(cd "$dir" && HOME="$run/fixture/home" USERPROFILE="$run/fixture/home" "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
+	# Shared caches are Roots inside the home directory. That home is the
+	# scratch copy, so a Plan is not written into the Fixture.
+	(cd "$dir" && HOME="$run/scratch/home" USERPROFILE="$run/scratch/home" "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
 	status=$?
 	set -e
 	printf '%s\n' "$status" > "$out/status"

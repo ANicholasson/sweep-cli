@@ -1,7 +1,10 @@
 package main_test
 
 import (
+	"bytes"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -178,4 +181,139 @@ func TestASharedCacheIsNotInTheDefaultPick(t *testing.T) {
 	for _, d := range differences(before, listing(t, dir)) {
 		t.Errorf("the Fixture changed during a dry run: %s", d)
 	}
+}
+
+func TestALinkInAnAncestorStillListsTheNpmCache(t *testing.T) {
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	b.home = filepath.Join(dir, "home")
+	b.config = t.TempDir()
+	cache := cacheCandidate(t, dir, key)
+	before := listing(t, dir)
+
+	direct := b.run(t, dir, "scan", "--json", b.home)
+	if direct.status != 0 || direct.stderr != "" {
+		t.Fatalf("direct exit %d, stderr %q", direct.status, direct.stderr)
+	}
+	if n := listedCache(t, decode(t, direct), cache); n != 1 {
+		t.Fatalf("scanning the home lists the cache %d times, want once", n)
+	}
+
+	via := filepath.Join(t.TempDir(), "via")
+	linkTo(t, dir, via)
+	through := b.run(t, dir, "scan", "--json", filepath.Join(via, "home"))
+	if through.status != 0 || through.stderr != "" {
+		t.Fatalf("through a Link: exit %d, stderr %q\n%s", through.status, through.stderr, through.stdout)
+	}
+	if n := listedCache(t, decode(t, through), cache); n != 1 {
+		t.Fatalf("scanning the home through a Link lists the cache %d times, want once\n%s", n, through.stdout)
+	}
+
+	for _, d := range differences(before, listing(t, dir)) {
+		t.Errorf("the Fixture changed: %s", d)
+	}
+}
+
+func TestAnIgnoredUnreadableCacheParentDoesNotFailTheScan(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("only an account that is not root can be refused a directory by its mode")
+	}
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	b.home = filepath.Join(dir, "home")
+	b.config = t.TempDir()
+	parent := filepath.Join(b.home, ".npm")
+	if err := os.Chmod(parent, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+	root := filepath.Join(dir, filepath.FromSlash(key.Root))
+
+	open := b.run(t, dir, "scan", "--json", root)
+	if open.status != 1 {
+		t.Fatalf("exit status %d, want 1 while the cache parent cannot be read", open.status)
+	}
+	if !strings.Contains(open.stdout, parent) {
+		t.Fatalf("unreadable does not name %s\n%s", parent, open.stdout)
+	}
+
+	cfg := b.config
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		cfg = b.home
+	}
+	writeConfig(t, cfg, "ignore = ["+tomlPath(t, parent)+"]\n")
+	got := b.run(t, dir, "scan", "--json", root)
+	if got.status != 0 || got.stderr != "" {
+		t.Fatalf("exit status %d, stderr %q, want 0\n%s", got.status, got.stderr, got.stdout)
+	}
+	out := decode(t, got)
+	for _, u := range out.Unreadable {
+		if strings.Contains(u.Path, parent) {
+			t.Errorf("reported %s, which is ignored", u.Path)
+		}
+	}
+	for _, c := range out.Candidates {
+		if strings.Contains(c.Path, "_cacache") {
+			t.Errorf("listed %s, and its parent is ignored", c.Path)
+		}
+	}
+}
+
+func TestAScanRunsWhenTheHomeDirectoryIsUnknown(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		t.Skip("the configuration directory and the home directory are both HOME")
+	}
+	b := build(t)
+	top := t.TempDir()
+	candidate := filepath.Join(top, "app", "node_modules", "a.js")
+	if err := os.MkdirAll(filepath.Dir(candidate), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(top, "app", "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidate, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configHome := t.TempDir()
+	cmd := exec.Command(b.sweep, "scan", "--json", top)
+	env := without(os.Environ(), "HOME", "USERPROFILE")
+	env = append(env, "XDG_CONFIG_HOME="+configHome, "XDG_CACHE_HOME="+t.TempDir(), "XDG_DATA_HOME="+t.TempDir())
+	if runtime.GOOS == "windows" {
+		env = windowsConfigEnv(env, configHome)
+		env = windowsCacheEnv(env, t.TempDir())
+	}
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	status := 0
+	if err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatal(err)
+		}
+		status = exit.ExitCode()
+	}
+	if status != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit %d, stderr %q, want the Scan of the given Root", status, stderr.String())
+	}
+	out := decode(t, ran{stdout: stdout.String()})
+	if len(out.Added) != 0 {
+		t.Errorf("added = %v, want none when the home directory is unknown", out.Added)
+	}
+	if len(out.Candidates) != 1 || !sameDir(t, out.Candidates[0].Path, filepath.Join(top, "app", "node_modules")) {
+		t.Errorf("candidates = %+v, want app/node_modules", out.Candidates)
+	}
+}
+
+func listedCache(t *testing.T, out scanJSON, cache string) int {
+	t.Helper()
+	n := 0
+	for _, c := range out.Candidates {
+		if sameDir(t, c.Path, cache) {
+			n++
+		}
+	}
+	return n
 }

@@ -641,12 +641,12 @@ func scanTree(given []string, shared bool, staleAfter *time.Duration) (scan.Resu
 	}
 	settings := scan.Settings{StaleAfter: after, Ignore: ignore}
 	if shared && cfg.SharedCaches {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return scan.Result{}, nil, err
+		// An unknown home adds no Shared cache. The Roots the caller
+		// gave are still scanned.
+		if home, err := os.UserHomeDir(); err == nil {
+			settings.Home = home
+			settings.SharedCaches = true
 		}
-		settings.Home = home
-		settings.SharedCaches = true
 	}
 	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), settings)
 	result.Configuration = cfg.Path

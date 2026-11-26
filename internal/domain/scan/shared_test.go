@@ -4,6 +4,7 @@ import (
 	"errors"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
@@ -180,6 +181,115 @@ func (r redirect) List(dir string) ([]scan.Entry, error) {
 		}
 	}
 	return entries, nil
+}
+
+func TestAnotherSpellingOfASharedCacheIsStillListed(t *testing.T) {
+	rel := "home/.npm/_cacache"
+	if runtime.GOOS == "windows" {
+		rel = "home/AppData/Local/npm-cache/_cacache"
+	}
+	files := sweeptest.NewFiles(sweeptest.Tree{
+		rel + "/a":          sweeptest.File{Bytes: 8},
+		"via/" + rel + "/a": sweeptest.File{Bytes: 8},
+	})
+	// The directory reached through via is a different path and the same file.
+	got := scan.Scan(aliasSpace{files, sweeptest.Top + "/via/" + rel, sweeptest.Top + "/" + rel}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/via"}, []domain.Ecosystem{cacheEcosystem(cacheWhere())}, scanNow, scan.Settings{
+		Home:         sweeptest.Top + "/home",
+		SharedCaches: true,
+	})
+	want := sweeptest.Top + "/via/" + rel
+	if len(got.Candidates) != 1 || got.Candidates[0].Path != want || got.Candidates[0].Rule.Kind != domain.Cache {
+		t.Errorf("candidates = %+v, want %s once", got.Candidates, want)
+	}
+}
+
+// aliasSpace reports from as the same file as to. The paths otherwise differ.
+type aliasSpace struct {
+	scan.Files
+	from, to string
+}
+
+func (a aliasSpace) Space(p string) (scan.Space, error) {
+	if p == a.from {
+		p = a.to
+	}
+	return a.Files.Space(p)
+}
+
+func TestAnIgnoredUnreadableCacheParentIsNotReported(t *testing.T) {
+	parent := "home/.npm"
+	if runtime.GOOS == "windows" {
+		parent = "home/AppData/Local/npm-cache"
+	}
+	files := sweeptest.NewFiles(sweeptest.Tree{
+		cacheTreePath():      sweeptest.File{Bytes: 8},
+		"app/package.json":   sweeptest.File{Bytes: 1},
+		"app/node_modules/a": sweeptest.File{Bytes: 1},
+	})
+	files.Unreadable(parent, errors.New("permission denied"))
+	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/app"}, []domain.Ecosystem{cacheEcosystem(cacheWhere()), web}, scanNow, scan.Settings{
+		StaleAfter:   domain.StaleAfter,
+		Home:         sweeptest.Top + "/home",
+		SharedCaches: true,
+		Ignore:       []string{sweeptest.Top + "/" + parent},
+	})
+	if len(got.Unreadable) != 0 || len(got.Added) != 0 {
+		t.Errorf("unreadable = %+v, added = %v, want neither", got.Unreadable, got.Added)
+	}
+	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/app/node_modules" {
+		t.Errorf("candidates = %+v, want the Project Candidate only", got.Candidates)
+	}
+}
+
+func TestAFileInASplitCacheIsMeasuredAsAFile(t *testing.T) {
+	when := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	where := domain.InSharedCache{Linux: "models", MacOS: "models", Windows: "models", Split: true}
+	files := sweeptest.NewFiles(sweeptest.Tree{
+		"home/models/weight.bin": sweeptest.File{Bytes: 100, Modified: when},
+		"home/models/keep/note":  sweeptest.File{Bytes: 4, Modified: when},
+	})
+	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/home"}, []domain.Ecosystem{cacheEcosystem(where)}, scanNow, scan.Settings{
+		StaleAfter:   domain.StaleAfter,
+		Home:         sweeptest.Top + "/home",
+		SharedCaches: true,
+	})
+	if len(got.Unreadable) != 0 {
+		t.Fatalf("unreadable = %+v, want none", got.Unreadable)
+	}
+	var file, dir *domain.Candidate
+	for i := range got.Candidates {
+		c := &got.Candidates[i]
+		switch c.Path {
+		case sweeptest.Top + "/home/models/weight.bin":
+			file = c
+		case sweeptest.Top + "/home/models/keep":
+			dir = c
+		default:
+			t.Errorf("unexpected Candidate %s", c.Path)
+		}
+	}
+	if file == nil || file.Size != 512 || !file.LastUsed.Equal(when) {
+		t.Fatalf("file = %+v, want Size 512 and Last used %s", file, when)
+	}
+	if dir == nil {
+		t.Fatal("the directory entry is not a Candidate")
+	}
+}
+
+func TestAnIgnoredEntryOfASplitCacheIsLeftOut(t *testing.T) {
+	where := domain.InSharedCache{Linux: "models", MacOS: "models", Windows: "models", Split: true}
+	files := sweeptest.NewFiles(sweeptest.Tree{
+		"home/models/secret.bin": sweeptest.File{Bytes: 8},
+		"home/models/keep.bin":   sweeptest.File{Bytes: 8},
+	})
+	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/home"}, []domain.Ecosystem{cacheEcosystem(where)}, scanNow, scan.Settings{
+		Home:         sweeptest.Top + "/home",
+		SharedCaches: true,
+		Ignore:       []string{sweeptest.Top + "/home/models/secret.bin"},
+	})
+	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/home/models/keep.bin" {
+		t.Errorf("candidates = %+v, want only keep.bin", got.Candidates)
+	}
 }
 
 func TestAnUnreadableStepOnTheWayIsReportedAndNotAdded(t *testing.T) {
