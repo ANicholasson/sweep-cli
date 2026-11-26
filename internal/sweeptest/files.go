@@ -80,6 +80,14 @@ func NewFiles(tree Tree) *Files {
 // Unreadable makes List and Space fail with err at the path p beneath Top.
 func (f *Files) Unreadable(p string, err error) { f.unreadable[path.Join(Top, p)] = err }
 
+// AsLink makes the directory at p a Link. A listing of its parent names a
+// Link, and listing p fails, so a walk that does not follow a Link stops.
+// What was inside p stays stored.
+func (f *Files) AsLink(p string) { f.nodes[path.Join(Top, p)].is = scan.Link }
+
+// Touch sets the modification time of p, which is beneath Top.
+func (f *Files) Touch(p string, at time.Time) { f.nodes[path.Join(Top, p)].modified = at }
+
 func (f *Files) List(dir string) ([]scan.Entry, error) {
 	n, err := f.at("list", dir)
 	if err != nil {

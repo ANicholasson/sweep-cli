@@ -1,4 +1,6 @@
-// Package trash removes a file from disk. It is the only package that does.
+// Package trash is the only package that removes anything from disk.
+// Move puts a Candidate in the operating system's trash. Drop removes a
+// file sweep itself created, such as a temporary Plan.
 package trash
 
 import "os"

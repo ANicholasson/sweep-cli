@@ -21,6 +21,10 @@ type binaries struct {
 	sweep, fixture string
 	config         string
 	cache          string
+	// data is the directory XDG_DATA_HOME points at, so a Clean's trash is
+	// there and never in the machine's own trash. Empty uses a fresh
+	// temporary directory.
+	data string
 }
 
 func build(t *testing.T) binaries {
@@ -73,7 +77,11 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	cmd := exec.Command(b.sweep, args...)
 	cmd.Dir = dir
 	configHome, cacheHome := b.userHomes(t)
-	cmd.Env = pointUserDirs(os.Environ(), configHome, cacheHome)
+	dataHome := b.data
+	if dataHome == "" {
+		dataHome = t.TempDir()
+	}
+	cmd.Env = pointUserDirs(os.Environ(), configHome, cacheHome, dataHome)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -225,7 +233,8 @@ func (b binaries) userHomes(t *testing.T) (configHome, cacheHome string) {
 	return configHome, cacheHome
 }
 
-func pointUserDirs(env []string, configHome, cacheHome string) []string {
+func pointUserDirs(env []string, configHome, cacheHome, dataHome string) []string {
+	env = append(without(env, "XDG_DATA_HOME"), "XDG_DATA_HOME="+dataHome)
 	switch runtime.GOOS {
 	case "windows":
 		env = windowsConfigEnv(env, configHome)

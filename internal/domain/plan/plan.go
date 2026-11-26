@@ -6,6 +6,7 @@ package plan
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -22,8 +23,9 @@ func (e UnknownPath) Error() string { return e.Path + " is not a Candidate" }
 // Fingerprint is what a Plan records about one Candidate so a later Clean
 // can see that the Candidate changed. ID is the file identity of the
 // Candidate path itself. Entries counts every directory entry inside it,
-// and a Link counts as one entry and is not followed. Size is the Size the
-// Scan measured, so a hard link is counted once in that same way. Newest is
+// and a Link counts as one entry and is not followed. Size counts each
+// hard-linked file once, the same way a Scan measures a Size, and does not
+// follow a Link. Newest is
 // the newest modification of the Candidate and of every path inside it. A
 // Link's own time counts, and what the Link leads to does not.
 type Fingerprint struct {
@@ -96,19 +98,11 @@ func Build(files scan.Files, result scan.Result, named []string) (Plan, []Choice
 		if !take {
 			continue
 		}
-		id, entries, newest, err := measure(files, c.Path)
+		measured, err := FingerprintOf(files, c.Path)
 		if err != nil {
 			return Plan{}, nil, fmt.Errorf("%s: %w", c.Path, err)
 		}
-		picked = append(picked, Picked{
-			Path: c.Path,
-			Fingerprint: Fingerprint{
-				ID:      id,
-				Entries: entries,
-				Size:    c.Size,
-				Newest:  newest,
-			},
-		})
+		picked = append(picked, Picked{Path: c.Path, Fingerprint: measured})
 	}
 	for _, w := range wanted {
 		if !seen[w.id] {
@@ -118,16 +112,21 @@ func Build(files scan.Files, result scan.Result, named []string) (Plan, []Choice
 	return Plan{Roots: append([]domain.Root(nil), result.Roots...), Picked: picked}, choices, nil
 }
 
-func measure(files scan.Files, path string) (scan.FileID, int64, time.Time, error) {
+// FingerprintOf measures path the way a Plan records it. Size counts each
+// hard-linked file once and does not follow a Link. A Link counts as one
+// entry.
+func FingerprintOf(files scan.Files, path string) (Fingerprint, error) {
 	space, err := files.Space(path)
 	if err != nil {
-		return scan.FileID{}, 0, time.Time{}, err
+		return Fingerprint{}, err
 	}
 	newest, err := files.Modified(path)
 	if err != nil {
-		return scan.FileID{}, 0, time.Time{}, err
+		return Fingerprint{}, err
 	}
 	entered := map[scan.FileID]bool{space.File: true}
+	counted := map[scan.FileID]bool{space.File: true}
+	size := space.Bytes
 	var entries int64
 	var walk func(string) error
 	walk = func(dir string) error {
@@ -147,14 +146,15 @@ func measure(files scan.Files, path string) (scan.FileID, int64, time.Time, erro
 			if mod.After(newest) {
 				newest = mod
 			}
-			if e.Is != scan.Dir {
-				continue
-			}
 			id, err := files.Space(e.Path)
 			if err != nil {
 				return err
 			}
-			if entered[id.File] {
+			if !counted[id.File] {
+				counted[id.File] = true
+				size += id.Bytes
+			}
+			if e.Is != scan.Dir || entered[id.File] {
 				continue
 			}
 			entered[id.File] = true
@@ -165,9 +165,20 @@ func measure(files scan.Files, path string) (scan.FileID, int64, time.Time, erro
 		return nil
 	}
 	if err := walk(path); err != nil {
-		return scan.FileID{}, 0, time.Time{}, err
+		return Fingerprint{}, err
 	}
-	return space.File, entries, newest, nil
+	return Fingerprint{ID: space.File, Entries: entries, Size: domain.Size(size), Newest: newest}, nil
+}
+
+// Match reports whether path still has the Fingerprint a Plan recorded.
+// An error means the Fingerprint could not be read, so it does not match.
+func Match(files scan.Files, picked Picked) (bool, error) {
+	got, err := FingerprintOf(files, picked.Path)
+	if err != nil {
+		return false, err
+	}
+	want := picked.Fingerprint
+	return got.ID == want.ID && got.Entries == want.Entries && got.Size == want.Size && got.Newest.Equal(want.Newest), nil
 }
 
 // Every list is [] when it is empty, never null.
@@ -229,4 +240,40 @@ func Marshal(p Plan) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// Unmarshal reads a version 1 Plan. A malformed Plan, a Plan with a field
+// this version does not have, or a Plan of another version is refused.
+func Unmarshal(data []byte) (Plan, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var raw planV1
+	if err := dec.Decode(&raw); err != nil || dec.More() {
+		return Plan{}, errors.New("the Plan is malformed")
+	}
+	if raw.Version != 1 {
+		return Plan{}, fmt.Errorf("the Plan has version %d, and sweep reads version 1", raw.Version)
+	}
+	out := Plan{Roots: []domain.Root{}, Picked: []Picked{}}
+	for _, root := range raw.Roots {
+		if root == "" {
+			return Plan{}, errors.New("the Plan is malformed")
+		}
+		out.Roots = append(out.Roots, domain.Root(root))
+	}
+	for _, c := range raw.Candidates {
+		if c.Path == "" {
+			return Plan{}, errors.New("the Plan is malformed")
+		}
+		out.Picked = append(out.Picked, Picked{
+			Path: c.Path,
+			Fingerprint: Fingerprint{
+				ID:      scan.FileID{Volume: c.Fingerprint.Identity.Volume, File: c.Fingerprint.Identity.File},
+				Entries: c.Fingerprint.Entries,
+				Size:    domain.Size(c.Fingerprint.Size),
+				Newest:  c.Fingerprint.Newest,
+			},
+		})
+	}
+	return out, nil
 }

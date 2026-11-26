@@ -1,4 +1,5 @@
-// Package report prints what a Scan found and what a dry run decided.
+// Package report prints what a Scan found, what a dry run decided, and what
+// a Clean did.
 package report
 
 import (
