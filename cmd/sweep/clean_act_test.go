@@ -389,6 +389,9 @@ func TestCleanRefusesAMalformedPlan(t *testing.T) {
 	b := build(t)
 	dir, _ := b.buildFixture(t)
 	b.data = filepath.Join(dir, "trash-home")
+	if err := os.MkdirAll(b.data, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	before := listing(t, dir)
 	for _, body := range []string{
 		"{}\n",
@@ -423,11 +426,25 @@ func TestCleanLeavesACandidateTheTrashRefuses(t *testing.T) {
 	}
 	b := build(t)
 	dir, key := b.buildFixture(t)
-	blocker := filepath.Join(dir, "not-a-directory")
-	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS == "darwin" {
+		// HOME has to be a directory so the dry run can read the
+		// configuration. The trash itself is a file, so the move fails.
+		home := filepath.Join(dir, "trash-home")
+		if err := os.MkdirAll(home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".Trash"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b.config = home
+		b.data = home
+	} else {
+		blocker := filepath.Join(dir, "not-a-directory")
+		if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b.data = blocker
 	}
-	b.data = blocker
 	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
 	planPath := filepath.Join(t.TempDir(), "plan.json")
 	dry := b.run(t, dir, "clean", "--dry-run", "--plan", planPath, at(key.Root))

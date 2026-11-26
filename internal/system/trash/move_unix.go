@@ -36,7 +36,7 @@ func (m Mover) Move(root, path string) error {
 		return err
 	}
 	abs = filepath.Clean(abs)
-	trash, err := m.locate(abs)
+	trash, err := m.locate(abs, root)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func (m Mover) Restore(root, path string) error {
 		return err
 	}
 	abs = filepath.Clean(abs)
-	trash, err := m.locate(abs)
+	trash, err := m.locate(abs, root)
 	if err != nil {
 		return err
 	}

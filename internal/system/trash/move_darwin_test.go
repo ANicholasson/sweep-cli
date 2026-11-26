@@ -59,12 +59,68 @@ func TestTheHomeVolumeUsesTheUserTrash(t *testing.T) {
 	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := volumeTrash(home, src)
+	got, err := volumeTrash(home, src, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != filepath.Join(home, ".Trash") {
 		t.Fatalf("trash = %s, want the user's Trash", got)
+	}
+}
+
+func TestALinkAboveTheRootIsResolvedForTheVolume(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real", "projects", "web-app")
+	if err := os.MkdirAll(filepath.Join(real, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "fx")); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "fx", "projects")
+	candidate := filepath.Join(root, "web-app", "node_modules")
+	got, err := resolvedForVolume(candidate, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, filepath.Join("real", "projects", "web-app", "node_modules")) {
+		t.Fatalf("resolved %s, want the Link's target", got)
+	}
+	if strings.Contains(got, filepath.Join("fx", "projects")) {
+		t.Fatalf("resolved %s, the Link is still in the volume path", got)
+	}
+	dev, err := deviceOf(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vol, err := volumeRoot(got, dev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vol == filepath.Join(root, "web-app") || strings.Contains(vol, filepath.Join("fx", "projects")) {
+		t.Fatalf("volume root %s is under the Link", vol)
+	}
+}
+
+func TestALinkBeneathTheRootStaysInTheVolumePath(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "projects")
+	if err := os.MkdirAll(filepath.Join(dir, "elsewhere"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "elsewhere"), filepath.Join(root, "via")); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(root, "via", "node_modules")
+	got, err := resolvedForVolume(candidate, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(got, filepath.Join("via", "node_modules")) || strings.Contains(got, "elsewhere") {
+		t.Fatalf("resolved %s, a Link beneath the Root was followed", got)
 	}
 }
 

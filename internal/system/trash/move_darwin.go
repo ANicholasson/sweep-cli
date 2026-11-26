@@ -26,14 +26,14 @@ func Open() (Mover, error) {
 	return Mover{home: home}, nil
 }
 
-func (m Mover) locate(abs string) (string, error) {
+func (m Mover) locate(abs, root string) (string, error) {
 	if m.dir != "" {
 		return m.dir, nil
 	}
 	if m.home == "" {
 		return "", ErrUnavailable
 	}
-	return volumeTrash(m.home, abs)
+	return volumeTrash(m.home, abs, root)
 }
 
 func itemDirs(trash string) (string, string) {
@@ -51,7 +51,7 @@ func openAt(dirfd int, path string, flags int, mode uint32) (int, error) {
 // volumeTrash is $HOME/.Trash when path is on the home volume, and
 // <volume>/.Trashes/<uid> otherwise. A rename stays on one file system,
 // so the other volume has its own trash.
-func volumeTrash(home, path string) (string, error) {
+func volumeTrash(home, path, root string) (string, error) {
 	homeDev, err := device(home)
 	if err != nil {
 		return "", err
@@ -60,14 +60,40 @@ func volumeTrash(home, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	root := ""
+	vol := ""
 	if pathDev != homeDev {
-		root, err = volumeRoot(path, pathDev)
+		resolved, err := resolvedForVolume(path, root)
+		if err != nil {
+			return "", err
+		}
+		vol, err = volumeRoot(resolved, pathDev)
 		if err != nil {
 			return "", err
 		}
 	}
-	return trashDir(home, homeDev, pathDev, root, os.Getuid()), nil
+	return trashDir(home, homeDev, pathDev, vol, os.Getuid()), nil
+}
+
+// resolvedForVolume resolves a Link above root. A Link at root or beneath
+// it stays in the spelled path. The rename refuses that Link on its own.
+func resolvedForVolume(path, root string) (string, error) {
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	if root != "" && contains(root, path) {
+		resolved, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			return "", err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return "", err
+		}
+		if rel == "." {
+			return resolved, nil
+		}
+		return filepath.Join(resolved, rel), nil
+	}
+	return filepath.EvalSymlinks(path)
 }
 
 func trashDir(home string, homeDev, pathDev uint64, root string, uid int) string {

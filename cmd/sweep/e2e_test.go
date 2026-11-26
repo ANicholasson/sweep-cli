@@ -88,6 +88,7 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	if runtime.GOOS == "darwin" && b.data != "" && b.config == "" {
 		configHome = dataHome
 		cacheHome = dataHome
+		ensureDarwinHome(t, dataHome)
 	}
 	env := pointUserDirs(os.Environ(), configHome, cacheHome, dataHome)
 	if b.pwd != "" {
@@ -321,6 +322,23 @@ func TestTheRealWindowsCacheDirectoryIsDropped(t *testing.T) {
 
 func movesToTrash() bool {
 	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+}
+
+// ensureDarwinHome creates home when a Clean will use it as HOME. A path
+// that already exists is left alone, including a file that blocks the trash
+// and a Link the test pointed at a real directory.
+func ensureDarwinHome(t *testing.T, home string) {
+	t.Helper()
+	_, err := os.Lstat(home)
+	if err == nil {
+		return
+	}
+	if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func configurationFile(home string) string {

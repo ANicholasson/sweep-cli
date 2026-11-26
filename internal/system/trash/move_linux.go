@@ -23,7 +23,7 @@ func Open() (Mover, error) {
 	return In(filepath.Join(dir, "Trash")), nil
 }
 
-func (m Mover) locate(string) (string, error) {
+func (m Mover) locate(string, string) (string, error) {
 	if m.dir == "" {
 		return "", ErrUnavailable
 	}
