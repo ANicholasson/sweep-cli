@@ -10,6 +10,7 @@ A per-user configuration file sets default Roots, the Stale threshold and the Ig
 - `config-stale` marks Stale from `stale_days` instead of 30.
 - `config-ignore` leaves out an ignored path and everything beneath it.
 - `config-ignore-age` leaves Last used on the newest Project file when that file is ignored.
+- `config-ignore-link` applies an Ignore path that reaches its target through a Link.
 - `config-bad` rejects a malformed file, a bad value and a key that would switch off a Safety rule or make Delete the default.
 
 ## How to get to it (user POV)
@@ -31,6 +32,7 @@ Preconditions:
 - **Command line wins.** With the same file, run `"$H" run "$RUN" scan-configuration/cli -- scan --json projects/recent-app`. Exit status `0`. `roots` is `["$RUN/fixture/projects/recent-app"]`.
 - **Threshold.** Write `roots` as above and `stale_days = 90`. Run `"$H" run "$RUN" scan-configuration/stale -C "$RUN/scratch" -- scan --json`. Exit status `0`. `projects/stale-app/node_modules` has `stale` false. Take its Last used from the modification time of a file in that Project outside `node_modules`, and check it is not 90 days before the Scan.
 - **Ignore.** Write `ignore` containing `$RUN/fixture/projects/web-app/node_modules` and `$RUN/fixture/projects/stale-app`, and the same `roots`. Run `"$H" run "$RUN" scan-configuration/ignore -- scan --json projects`. Exit status `0`. Those two Candidates are absent. `projects/recent-app/node_modules` is listed once.
+- **Ignore through a Link.** In `$RUN/scratch/link`, make `stale/plain` a Project with `node_modules`, and `plainlink` a Link to `stale/plain`. Write `ignore` as `$RUN/scratch/link/plainlink/node_modules`. Run `"$H" run "$RUN" scan-configuration/ignore-link -- scan --json "$RUN/scratch/link/stale/plain"`. Exit status `0` and the Candidate is absent. Run `"$H" run "$RUN" scan-configuration/ignore-link-root -- scan --json "$RUN/scratch/link/plainlink"`. Exit status `0` and the Candidate is absent.
 - **Ignore inside a Project.** In `$RUN/scratch/age`, make `app/package.json` 100 days old, `app/src/new.js` one hour old, and `app/node_modules/a/index.js`. Point the configuration file's `ignore` at `$RUN/scratch/age/app/src` and give no `roots`. Run `"$H" run "$RUN" scan-configuration/ignore-age -C "$RUN/scratch/age" -- scan --json .`. Exit status `0`. The Candidate's `last_used` equals the modification time of `app/src/new.js`, and `stale` is false. `src` is not a reported path.
 - **Rejected keys.** Write `delete = true`. Run `"$H" run "$RUN" scan-configuration/delete -C "$RUN/scratch" -- scan`. Exit status `2`, stdout empty, stderr names the file and `delete`. The same for `git = false`, `root = false` and `fingerprint = false`, each naming its key.
 - **Unchanged.** Every step's `fixture-changes.txt` is empty.

@@ -41,7 +41,8 @@ TOML and the only keys are these:
     stale_days = 30
     ignore = ["/path/to/keep"]
 
-`roots` and `ignore` are absolute paths. `stale_days` is a whole number of
+`roots` and `ignore` are absolute paths. A Link in an Ignore path is
+followed, including one earlier than the last component. `stale_days` is a whole number of
 days and replaces the 30-day threshold, and zero means a Candidate is
 Stale when its Last used is before now. A malformed file is an error that
 names the file. An unknown key or a bad value is an error that names the

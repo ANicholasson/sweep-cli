@@ -330,7 +330,7 @@ func parseInterspersed(flags *flag.FlagSet, args []string) ([]string, error) {
 func resolveIgnore(paths []string) ([]string, error) {
 	out := make([]string, len(paths))
 	for i, p := range paths {
-		resolved, err := files.Resolve(p)
+		resolved, err := files.ResolveDir(p)
 		if errors.Is(err, os.ErrNotExist) {
 			out[i] = p
 			continue

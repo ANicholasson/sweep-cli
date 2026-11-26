@@ -285,6 +285,48 @@ func TestAnIgnoredFileStillCountsForLastUsed(t *testing.T) {
 	}
 }
 
+func TestAnIgnorePathThroughALinkIsApplied(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	b.config = filepath.Join(top, "config")
+	plain := filepath.Join(top, "stale", "plain")
+	if err := os.MkdirAll(filepath.Join(plain, "node_modules", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plain, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plain, "node_modules", "a", "index.js"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(top, "plainlink")
+	if err := os.Symlink(plain, link); err != nil {
+		if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+			t.Skipf("this account may not make a symlink: %v", err)
+		}
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(plain, "node_modules")
+	scan := func(root string) scanJSON {
+		t.Helper()
+		got := b.run(t, top, "scan", "--json", root)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("root %s: exit status %d, stderr %q, stdout %s", root, got.status, got.stderr, got.stdout)
+		}
+		return decode(t, got)
+	}
+	if !seen(t, scan(plain), candidate) {
+		t.Fatal("the Candidate is not listed, so the Ignore shows nothing")
+	}
+	writeConfig(t, b.config, "ignore = ["+tomlPath(t, filepath.Join(link, "node_modules"))+"]\n")
+	if seen(t, scan(plain), candidate) {
+		t.Fatal("listed the Candidate, and the Ignore path reaches it through a Link")
+	}
+	if seen(t, scan(link), candidate) {
+		t.Fatal("listed the Candidate under the Link Root")
+	}
+}
+
 func writeConfig(t *testing.T, home, body string) string {
 	t.Helper()
 	path := configurationFile(home)

@@ -205,11 +205,41 @@ func command(t *testing.T, name string, args ...string) {
 func pointConfiguration(env []string, home string) []string {
 	switch runtime.GOOS {
 	case "windows":
-		return append(without(env, "AppData"), "AppData="+home)
+		return windowsConfigEnv(env, home)
 	case "darwin", "ios":
 		return append(without(env, "HOME"), "HOME="+home)
 	default:
 		return append(without(env, "XDG_CONFIG_HOME"), "XDG_CONFIG_HOME="+home)
+	}
+}
+
+// windowsConfigEnv points the configuration directory at home. APPDATA is
+// the name Windows sets. The comparison is case-sensitive, so leaving
+// that name in place keeps the real roaming directory.
+func windowsConfigEnv(env []string, home string) []string {
+	return append(without(env, "APPDATA", "AppData"), "AppData="+home)
+}
+
+func TestTheRealWindowsRoamingDirectoryIsDropped(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "config")
+	got := windowsConfigEnv([]string{
+		"APPDATA=C:\\Users\\real\\AppData\\Roaming",
+		"AppData=C:\\Users\\real\\AppData\\Roaming",
+		"PATH=x",
+	}, home)
+	var n int
+	for _, v := range got {
+		name, value, _ := strings.Cut(v, "=")
+		if name != "APPDATA" && name != "AppData" {
+			continue
+		}
+		n++
+		if value != home {
+			t.Errorf("%s=%s, want the temporary directory", name, value)
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d configuration directories in %v, want one", n, got)
 	}
 }
 
