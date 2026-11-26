@@ -72,11 +72,11 @@ Leaving a path out of every Scan because the user said so. Unlike a Skip, it is 
 _Avoid_: exclude, hide
 
 **Configuration**:
-The per-user file that sets default Roots, the Stale threshold and the Ignore list. A missing file means the defaults. It cannot switch off a Safety rule or make Delete the default.
+The per-user file that sets default Roots, the Stale threshold, the Ignore list and whether Shared caches are added. A missing file means the defaults. It cannot switch off a Safety rule or make Delete the default.
 _Avoid_: settings, preferences, rc file
 
 **Pick**:
-Choosing a Candidate for a Plan. sweep picks every Stale Candidate beneath the Roots the user gave, and the user can pick or unpick any Candidate. For one dry run the Pick can be narrowed to Kinds or Ecosystems, the age that counts as Stale can be changed, and every Candidate can be picked whatever its age. None of those choices picks a Shared cache or Docker data.
+Choosing a Candidate for a Plan. sweep picks every Stale Candidate beneath the Roots the user gave, and the user can pick or unpick any Candidate. For one dry run the Pick can be narrowed to Kinds or Ecosystems, the age that counts as Stale can be changed, and every Candidate can be picked whatever its age. None of those choices picks a Shared cache or Docker data. A Shared cache is picked when the user names it, or names its Ecosystem.
 _Avoid_: select, mark, include
 
 **Clean**:

@@ -21,6 +21,10 @@ type binaries struct {
 	sweep, fixture string
 	config         string
 	cache          string
+	// home is the directory sweep treats as the user's home. Empty uses
+	// the configuration directory, which holds no Shared cache, so a run
+	// never reads the machine's home.
+	home string
 	// data is the directory XDG_DATA_HOME points at, so a Clean's trash is
 	// there and never in the machine's own trash. Empty uses a fresh
 	// temporary directory. omitData leaves XDG_DATA_HOME unset, so Windows
@@ -92,7 +96,7 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 		cacheHome = dataHome
 		ensureDarwinHome(t, dataHome)
 	}
-	env := pointUserDirs(os.Environ(), configHome, cacheHome, dataHome)
+	env := pointUserDirs(os.Environ(), configHome, cacheHome, dataHome, b.home)
 	if b.omitData {
 		env = without(env, "XDG_DATA_HOME")
 	}
@@ -251,17 +255,22 @@ func (b binaries) userHomes(t *testing.T) (configHome, cacheHome string) {
 	return configHome, cacheHome
 }
 
-func pointUserDirs(env []string, configHome, cacheHome, dataHome string) []string {
+func pointUserDirs(env []string, configHome, cacheHome, dataHome, home string) []string {
 	env = append(without(env, "XDG_DATA_HOME"), "XDG_DATA_HOME="+dataHome)
+	if home == "" {
+		home = configHome
+	}
 	switch runtime.GOOS {
 	case "windows":
 		env = windowsConfigEnv(env, configHome)
-		return windowsCacheEnv(env, cacheHome)
+		env = windowsCacheEnv(env, cacheHome)
+		return append(without(env, "USERPROFILE"), "USERPROFILE="+home)
 	case "darwin", "ios":
-		return append(without(env, "HOME"), "HOME="+configHome)
+		return append(without(env, "HOME"), "HOME="+home)
 	default:
 		env = append(without(env, "XDG_CONFIG_HOME"), "XDG_CONFIG_HOME="+configHome)
-		return append(without(env, "XDG_CACHE_HOME"), "XDG_CACHE_HOME="+cacheHome)
+		env = append(without(env, "XDG_CACHE_HOME"), "XDG_CACHE_HOME="+cacheHome)
+		return append(without(env, "HOME"), "HOME="+home)
 	}
 }
 

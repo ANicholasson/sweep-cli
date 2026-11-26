@@ -2,6 +2,10 @@ package scan
 
 import (
 	"cmp"
+	"errors"
+	"io/fs"
+	"path"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -12,8 +16,12 @@ import (
 
 // Result is what a Scan found.
 type Result struct {
-	// Roots are the Roots the Scan looked beneath, in the order given.
+	// Roots are the Roots the Scan looked beneath. The ones the caller gave
+	// come first, in the order given, then the Shared caches sweep added.
 	Roots []domain.Root
+	// Added are the Shared cache Roots sweep added, in the order they
+	// appear in Roots. A Root the caller gave is never here.
+	Added []domain.Root
 	// Candidates are in the order the Scan met them: Root by Root, and in
 	// each directory in order of name. Two Scans of an unchanged tree with
 	// the same Roots list the same Candidates in the same order.
@@ -46,19 +54,31 @@ type Docker interface {
 	Data() domain.DockerData
 }
 
-// Settings is the Stale threshold and the Ignore list for one Scan.
+// Settings is what one Scan was asked to do beyond the Roots it was given.
 // StaleAfter is how old Last used must be before a Candidate is Stale.
 // Zero means a Candidate is Stale when its Last used is before now.
 // Each Ignore path, and everything beneath it, is left out of the Scan.
+// Home is the user's home directory. Shared caches are added only inside
+// it, and an empty Home adds none. SharedCaches adds each known Shared
+// cache as a Root. Off, a Scan looks only beneath the Roots it was given.
 type Settings struct {
-	StaleAfter time.Duration
-	Ignore     []string
+	StaleAfter   time.Duration
+	Ignore       []string
+	Home         string
+	SharedCaches bool
 }
 
 // Scan looks beneath each Root for the directories that the InProject Rules
-// of the Ecosystems recognise, and measures the Size of each. It leaves
-// Shared cache Rules alone. A directory the Git rule keeps is not a
-// Candidate.
+// of the Ecosystems recognise, and measures the Size of each. A directory
+// the Git rule keeps is not a Candidate.
+//
+// When SharedCaches is set, each InSharedCache Rule adds its directory on
+// this operating system as a Root, after the Roots the caller gave, and
+// that directory is one Candidate. A location that is not inside Home is
+// not added, which the Scan checks when it would add the Root. A missing
+// directory is not added. With Split, each entry directly inside the
+// directory is a Candidate and the directory itself is not. A Shared cache
+// is not walked for InProject Rules.
 //
 // It never enters a Candidate, a directory the Git rule keeps, or a Link,
 // and it never enters or reports a path that is not beneath the Root it is
@@ -95,11 +115,18 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 		files:  files,
 		git:    git,
 		rules:  index(ecosystems),
+		caches: map[string]placed{},
 		walked: map[FileID]bool{},
 		listed: map[FileID]bool{},
 		inside: map[FileID]bool{},
 		ignore: settings.Ignore,
 		formOf: map[string]string{},
+	}
+	roots = slices.Clone(roots)
+	var added []domain.Root
+	if settings.SharedCaches {
+		added = s.placeCaches(ecosystems, settings.Home, roots)
+		roots = append(roots, added...)
 	}
 	for _, root := range roots {
 		s.enter(string(root), string(root))
@@ -114,13 +141,163 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 		skip[f.id] = true
 	}
 	s.stamp(candidates, skip, now, settings.StaleAfter)
-	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data(), StaleAfter: settings.StaleAfter}
+	return Result{Roots: slices.Clone(roots), Added: added, Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data(), StaleAfter: settings.StaleAfter}
+}
+
+// placeCaches records each Shared cache that is a directory inside home and
+// returns the ones the caller did not already give as a Root. A location
+// outside home is not recorded. The check uses the path the files adapter
+// returns, so a path that only looks relative and then leaves home is
+// refused here too.
+func (s *scanner) placeCaches(ecosystems []domain.Ecosystem, home string, given []domain.Root) []domain.Root {
+	if home == "" {
+		return nil
+	}
+	var added []domain.Root
+	for _, e := range ecosystems {
+		for _, r := range e.Rules {
+			w, ok := r.Where.(domain.InSharedCache)
+			if !ok {
+				continue
+			}
+			full, ok := s.insideHome(home, cacheLocation(w))
+			if !ok {
+				continue
+			}
+			got := placed{recogniser{ecosystem: e.Name, rule: r}}
+			s.caches[full] = got
+			space, err := s.files.Space(full)
+			if err != nil {
+				s.unread(full, err)
+				continue
+			}
+			if s.knownRoot(given, space.File, got) {
+				continue
+			}
+			added = append(added, domain.Root(full))
+			given = append(given, domain.Root(full))
+		}
+	}
+	return added
+}
+
+// knownRoot reports whether a Root the caller gave is the same directory
+// as id. It records that spelling too, so a later walk of it still treats
+// the directory as the Shared cache.
+func (s *scanner) knownRoot(given []domain.Root, id FileID, got placed) bool {
+	for _, root := range given {
+		space, err := s.files.Space(string(root))
+		if err != nil || space.File != id {
+			continue
+		}
+		s.caches[string(root)] = got
+		return true
+	}
+	return false
+}
+
+// insideHome is location as a directory inside home, spelled the way the
+// files adapter spells it. It is false when location is not a clean
+// slash-separated path inside the home directory, when any step leaves
+// home, and when the directory is missing. A directory on the way that
+// cannot be read is recorded, and then the cache is not added.
+func (s *scanner) insideHome(home, location string) (string, bool) {
+	if !cleanRelative(location) {
+		return "", false
+	}
+	cur := home
+	for _, part := range strings.Split(location, "/") {
+		entries, err := s.files.List(cur)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				s.unread(cur, err)
+			}
+			return "", false
+		}
+		var next Entry
+		var found bool
+		for _, e := range entries {
+			if sameName(e.Name, part) {
+				next, found = e, true
+				break
+			}
+		}
+		if !found || next.Is != Dir || !safety.Beneath(home, next.Path, false) || next.Path == home {
+			return "", false
+		}
+		cur = next.Path
+	}
+	return cur, true
+}
+
+func (s *scanner) shared(root, path string) {
+	c := s.caches[path]
+	space, err := s.files.Space(path)
+	if err != nil {
+		s.unread(path, err)
+		return
+	}
+	if s.walked[space.File] {
+		return
+	}
+	s.walked[space.File] = true
+	w := c.recogniser.rule.Where.(domain.InSharedCache)
+	if !w.Split {
+		s.candidate(root, Entry{Path: path, Is: Dir}, c.recogniser, "")
+		return
+	}
+	entries, err := s.files.List(path)
+	if err != nil {
+		s.unread(path, err)
+		return
+	}
+	for _, e := range entries {
+		if e.Is == Link || (e.Is != Dir && e.Is != File) || !safety.Beneath(root, e.Path, false) {
+			continue
+		}
+		s.candidate(root, e, c.recogniser, "")
+	}
+}
+
+func cacheLocation(w domain.InSharedCache) string {
+	switch runtime.GOOS {
+	case "windows":
+		return w.Windows
+	case "darwin", "ios":
+		return w.MacOS
+	default:
+		return w.Linux
+	}
+}
+
+// cleanRelative is a slash-separated path that stays inside the home
+// directory: no root, no empty step, and no step that climbs out.
+func cleanRelative(location string) bool {
+	return location != "" &&
+		!path.IsAbs(location) &&
+		path.Clean(location) == location &&
+		location != "." && location != ".." && !strings.HasPrefix(location, "../") &&
+		!strings.HasPrefix(location, "~") &&
+		!strings.ContainsAny(location, `\:$%`)
+}
+
+func sameName(name, part string) bool {
+	if name == part {
+		return true
+	}
+	switch runtime.GOOS {
+	case "windows", "darwin", "ios":
+		return strings.EqualFold(name, part)
+	default:
+		return false
+	}
 }
 
 type scanner struct {
 	files  Files
 	git    safety.Git
 	rules  rules
+	caches map[string]placed
 	walked map[FileID]bool
 	listed map[FileID]bool
 	inside map[FileID]bool
@@ -131,6 +308,12 @@ type scanner struct {
 	unreadable []Unreadable
 }
 
+// placed is one Shared cache a Scan will add, at the path the files
+// adapter gave for it.
+type placed struct {
+	recogniser recogniser
+}
+
 type found struct {
 	id        FileID
 	candidate domain.Candidate
@@ -138,6 +321,10 @@ type found struct {
 
 func (s *scanner) enter(root, path string) {
 	if s.ignored(path) || !safety.Beneath(root, path, false) {
+		return
+	}
+	if _, ok := s.caches[path]; ok {
+		s.shared(root, path)
 		return
 	}
 	space, err := s.files.Space(path)

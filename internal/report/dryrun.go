@@ -40,11 +40,7 @@ import (
 func DryRun(w io.Writer, result scan.Result, choices []plan.Choice, dest string) error {
 	var out bytes.Buffer
 	writeConfiguration(&out, result.Configuration)
-	out.WriteString("Roots\n")
-	for _, root := range result.Roots {
-		fmt.Fprintf(&out, "  %s\n", root)
-	}
-	out.WriteString("\n")
+	writeRoots(&out, result.Roots, result.Added)
 	if len(choices) == 0 {
 		out.WriteString("No Candidates.\n")
 	} else {

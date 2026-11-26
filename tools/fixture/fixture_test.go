@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -76,7 +77,7 @@ func matchesAnswerKey(t *testing.T, dir string) {
 			t.Errorf("Candidate %s is not a directory in the Fixture", c.Path)
 			continue
 		}
-		if !beneath(c.Path, key.Root) {
+		if !beneath(c.Path, key.Root) && c.Path != npmCachePath() {
 			t.Errorf("Candidate %s is outside the Root %s", c.Path, key.Root)
 		}
 		kind, ok := recognised(dir, c.Path)
@@ -270,20 +271,38 @@ func candidateName(name string) bool {
 }
 
 // recognised reports the Kind of the Rule that finds p the way a Scan would,
-// by its name and the Manifest beside it.
+// by its name and the Manifest beside it, or by the Shared cache location
+// inside the Fixture's home directory.
 func recognised(dir, p string) (string, bool) {
 	for _, e := range ecosystems.All() {
 		for _, r := range e.Rules {
-			w, ok := r.Where.(domain.InProject)
-			if !ok || path.Base(p) != w.Candidate {
-				continue
-			}
-			if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(path.Join(path.Dir(p), w.Manifest)))); err == nil {
-				return r.Kind.String(), true
+			switch w := r.Where.(type) {
+			case domain.InProject:
+				if path.Base(p) != w.Candidate {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(path.Join(path.Dir(p), w.Manifest)))); err == nil {
+					return r.Kind.String(), true
+				}
+			case domain.InSharedCache:
+				if p == npmCachePath() && sharedLocation(w) == strings.TrimPrefix(p, "home/") {
+					return r.Kind.String(), true
+				}
 			}
 		}
 	}
 	return "", false
+}
+
+func sharedLocation(w domain.InSharedCache) string {
+	switch runtime.GOOS {
+	case "windows":
+		return w.Windows
+	case "darwin":
+		return w.MacOS
+	default:
+		return w.Linux
+	}
 }
 
 func isDir(dir, p string) bool {

@@ -122,6 +122,25 @@ var committed = []entry{
 	{"projects/plain/target/note.txt", file("not a crate\n")},
 }
 
+// npmCachePath is the npm cache inside the Fixture's home directory, for
+// the operating system that builds the Fixture. The other systems' paths
+// are not created. A Scan finds it only when its home directory is this
+// home, so a test never reads the machine's home.
+func npmCachePath() string {
+	if runtime.GOOS == "windows" {
+		return "home/AppData/Local/npm-cache/_cacache"
+	}
+	return "home/.npm/_cacache"
+}
+
+func npmCache() []entry {
+	cache := npmCachePath()
+	return []entry{
+		{cache + "/index-v5/a", file("synthetic npm cache\n")},
+		{cache + "/index-v5/b", hardLink(cache + "/index-v5/a")},
+	}
+}
+
 // ignored is written before the commit. The repository's gitignore names it,
 // so git add leaves it out and the Git rule does not keep it.
 var ignored = []entry{
@@ -169,6 +188,7 @@ var key = answerKey{
 		{Path: "projects/tracked-app/ignored-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/tracked-app/untracked-app/node_modules", Kind: domain.Dependencies.String()},
 		{Path: "projects/rust-app/target", Kind: domain.BuildOutput.String()},
+		{Path: npmCachePath(), Kind: domain.Cache.String()},
 	},
 	Traps: []trap{
 		{Path: "projects/tracked-app/node_modules", Reason: "Git tracks its files, so the Git rule keeps it."},
@@ -244,6 +264,11 @@ func fill(dir string) error {
 			return err
 		}
 	}
+	for _, e := range npmCache() {
+		if err := writeEntry(dir, e); err != nil {
+			return err
+		}
+	}
 	for _, r := range repositories {
 		if err := tracksAll(dir, r); err != nil {
 			return err
@@ -270,7 +295,17 @@ func stampAges(dir string) error {
 	if err := stampProject(dir, "projects/stale-app", now.Add(-60*24*time.Hour), hour, now); err != nil {
 		return err
 	}
-	return stampProject(dir, "projects/recent-app", now.Add(-24*time.Hour), hour, now.Add(-24*time.Hour))
+	if err := stampProject(dir, "projects/recent-app", now.Add(-24*time.Hour), hour, now.Add(-24*time.Hour)); err != nil {
+		return err
+	}
+	old := now.Add(-60 * 24 * time.Hour)
+	cache := filepath.Join(dir, filepath.FromSlash(npmCachePath()))
+	return filepath.WalkDir(cache, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		return os.Chtimes(p, old, old)
+	})
 }
 
 func stampProject(dir, project string, own, inside, accessed time.Time) error {

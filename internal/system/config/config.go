@@ -15,19 +15,20 @@ import (
 )
 
 // Load reads dir/sweep/config.toml. A missing file returns the defaults and
-// an empty Path: no Roots, the Stale threshold domain.StaleAfter, and an
-// empty Ignore list. The file is TOML. The only keys are roots, stale_days
-// and ignore. Any other key is an error that names it, so a key cannot
-// switch off a Safety rule or make Delete the default. roots and ignore are
-// lists of absolute paths. stale_days is a whole number of days, and zero
-// is a threshold of zero. When stale_days is absent the threshold is
-// domain.StaleAfter. A malformed file or a bad value names the file and,
-// when a key is at fault, that key.
+// an empty Path: no Roots, the Stale threshold domain.StaleAfter, an empty
+// Ignore list, and Shared caches on. The file is TOML. The only keys are
+// roots, stale_days, ignore and shared_caches. Any other key is an error
+// that names it, so a key cannot switch off a Safety rule or make Delete
+// the default. roots and ignore are lists of absolute paths. stale_days is
+// a whole number of days, and zero is a threshold of zero. When stale_days
+// is absent the threshold is domain.StaleAfter. shared_caches is true or
+// false, and when it is absent Shared caches stay on. A malformed file or
+// a bad value names the file and, when a key is at fault, that key.
 func Load(dir string) (domain.Configuration, error) {
 	path := filepath.Join(dir, "sweep", "config.toml")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return domain.Configuration{StaleAfter: domain.StaleAfter}, nil
+		return domain.Configuration{StaleAfter: domain.StaleAfter, SharedCaches: true}, nil
 	}
 	if err != nil {
 		return domain.Configuration{}, fmt.Errorf("%s: %w", path, err)
@@ -49,7 +50,7 @@ func parse(data []byte) (domain.Configuration, error) {
 	for _, key := range unknownKeys(raw) {
 		errs = append(errs, fmt.Errorf("unknown key %q", key))
 	}
-	cfg := domain.Configuration{StaleAfter: domain.StaleAfter}
+	cfg := domain.Configuration{StaleAfter: domain.StaleAfter, SharedCaches: true}
 	if v, ok := raw["roots"]; ok {
 		roots, err := absolutePaths("roots", v)
 		if err != nil {
@@ -74,14 +75,30 @@ func parse(data []byte) (domain.Configuration, error) {
 			cfg.Ignore = paths
 		}
 	}
+	if v, ok := raw["shared_caches"]; ok {
+		on, err := boolOf("shared_caches", v)
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			cfg.SharedCaches = on
+		}
+	}
 	return cfg, errors.Join(errs...)
+}
+
+func boolOf(key string, v any) (bool, error) {
+	on, ok := v.(bool)
+	if !ok {
+		return false, fmt.Errorf("key %q: want true or false", key)
+	}
+	return on, nil
 }
 
 func unknownKeys(raw map[string]any) []string {
 	var keys []string
 	for key := range raw {
 		switch key {
-		case "roots", "stale_days", "ignore":
+		case "roots", "stale_days", "ignore", "shared_caches":
 		default:
 			keys = append(keys, key)
 		}

@@ -22,7 +22,7 @@ Preconditions:
 - `$RUN/evidence/build.txt` gives the commit the binary was built from.
 
 - **Version.** Run `"$H" run "$RUN" version/version -- --version`. Exit status `0`, stderr empty, stdout one line `sweep v0.0.0-<commit time, UTC, as yyyymmddhhmmss>-<first 12 hex digits of the commit>`, with `+dirty` appended when `build.txt` lists uncommitted changes. The 12 hex digits match the `checkout:` line of `build.txt`.
-- **No command.** Run `"$H" run "$RUN" version/none --`. Exit status `2`, stdout empty, stderr starts `usage: sweep scan [--json] [Root...]` and lists `sweep --version`.
+- **No command.** Run `"$H" run "$RUN" version/none --`. Exit status `2`, stdout empty, stderr starts `usage: sweep scan [--json] [--no-shared-caches] [Root...]` and lists `sweep --version`.
 - **Unknown command.** Run `"$H" run "$RUN" version/unknown -- recycle`. Exit status `2`, stdout empty, stderr is the same usage.
 - **Unknown flag.** Run `"$H" run "$RUN" version/bad-flag -- scan --jsno`. Exit status `2`, stdout empty, stderr starts `flag provided but not defined: -jsno` and shows `Usage of sweep scan:`.
 - **Unchanged.** Every step's `fixture-changes.txt` is empty.

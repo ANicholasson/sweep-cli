@@ -42,7 +42,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sweep", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
-		_, _ = fmt.Fprintln(stderr, "usage: sweep scan [--json] [Root...]")
+		_, _ = fmt.Fprintln(stderr, "usage: sweep scan [--json] [--no-shared-caches] [Root...]")
 		_, _ = fmt.Fprintln(stderr, "       "+cleanDryUsage)
 		_, _ = fmt.Fprintln(stderr, "       "+cleanActUsage)
 		_, _ = fmt.Fprintln(stderr, "       sweep --version")
@@ -73,11 +73,12 @@ func scanCommand(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sweep scan", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	asJSON := flags.Bool("json", false, "print the Scan as JSON")
+	noShared := flags.Bool("no-shared-caches", false, "do not add Shared cache Roots")
 	given, err := parseInterspersed(flags, args)
 	if err != nil {
 		return misused
 	}
-	result, _, err := scanTree(given, nil)
+	result, _, err := scanTree(given, !*noShared, nil)
 	if err != nil {
 		say(stderr, err)
 		return misused
@@ -106,12 +107,15 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	dry := flags.Bool("dry-run", false, "write a Plan and remove nothing")
 	planPath := flags.String("plan", "", "file the Plan is written to, instead of the per-user cache")
+	noShared := flags.Bool("no-shared-caches", false, "do not add Shared cache Roots")
 	var pick repeated
 	flags.Var(&pick, "pick", "add this Candidate to the Plan")
 	var kind repeated
 	flags.Var(&kind, "kind", "narrow the Pick to this Kind; repeat to name more than one")
 	var ecosystem repeated
 	flags.Var(&ecosystem, "ecosystem", "narrow the Pick to this Ecosystem; repeat to name more than one")
+	var caches repeated
+	flags.Var(&caches, "pick-caches", "pick the Shared caches of this Ecosystem")
 	var staleDays daysFlag
 	flags.Var(&staleDays, "stale-days", "days before a Candidate is Stale, for this run")
 	all := flags.Bool("all", false, "pick every Candidate, whatever its age")
@@ -120,7 +124,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		return misused
 	}
 	if !*dry {
-		if *planPath == "" || len(pick) > 0 || len(kind) > 0 || len(ecosystem) > 0 || *all || staleDays.set || len(given) > 0 {
+		if *planPath == "" || len(pick) > 0 || len(kind) > 0 || len(ecosystem) > 0 || len(caches) > 0 || *noShared || *all || staleDays.set || len(given) > 0 {
 			writeCleanUsage(stderr)
 			return misused
 		}
@@ -140,7 +144,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	if staleDays.set {
 		staleAfter = &staleDays.after
 	}
-	result, ignore, err := scanTree(given, staleAfter)
+	result, ignore, err := scanTree(given, !*noShared, staleAfter)
 	if err != nil {
 		say(stderr, err)
 		return misused
@@ -166,13 +170,15 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 		Named:      named,
 		Kinds:      kinds,
 		Ecosystems: names,
+		Caches:     []string(caches),
 		AnyAge:     *all,
 		StaleNamed: staleDays.set,
 	})
 	if err != nil {
 		var unknown plan.UnknownPath
+		var ecosystem plan.UnknownEcosystem
 		say(stderr, err)
-		if errors.As(err, &unknown) {
+		if errors.As(err, &unknown) || errors.As(err, &ecosystem) {
 			return misused
 		}
 		return incomplete
@@ -531,7 +537,7 @@ func say(stderr io.Writer, err error) {
 }
 
 const (
-	cleanDryUsage = "sweep clean --dry-run [--plan file] [--pick path] [--kind Kind] [--ecosystem Name] [--stale-days n] [--all] [Root...]"
+	cleanDryUsage = "sweep clean --dry-run [--plan file] [--pick path] [--pick-caches Ecosystem] [--kind Kind] [--ecosystem Name] [--stale-days n] [--all] [--no-shared-caches] [Root...]"
 	cleanActUsage = "sweep clean --plan file"
 )
 
@@ -610,9 +616,10 @@ func (r *repeated) Set(s string) error {
 // command names any. Otherwise they are the Configuration's Roots, or the
 // current directory when the Configuration names none. The Stale threshold
 // and the Ignore list come from the Configuration, unless staleAfter is
-// set, which is the threshold for this run. The Result names the file
-// that was read.
-func scanTree(given []string, staleAfter *time.Duration) (scan.Result, []string, error) {
+// set, which is the threshold for this run. Shared caches are added when
+// the setting is on and shared is set. The Result names the file that was
+// read.
+func scanTree(given []string, shared bool, staleAfter *time.Duration) (scan.Result, []string, error) {
 	cfg, err := configuration()
 	if err != nil {
 		return scan.Result{}, nil, err
@@ -632,10 +639,16 @@ func scanTree(given []string, staleAfter *time.Duration) (scan.Result, []string,
 	if staleAfter != nil {
 		after = *staleAfter
 	}
-	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), scan.Settings{
-		StaleAfter: after,
-		Ignore:     ignore,
-	})
+	settings := scan.Settings{StaleAfter: after, Ignore: ignore}
+	if shared && cfg.SharedCaches {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return scan.Result{}, nil, err
+		}
+		settings.Home = home
+		settings.SharedCaches = true
+	}
+	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), settings)
 	result.Configuration = cfg.Path
 	return result, ignore, nil
 }

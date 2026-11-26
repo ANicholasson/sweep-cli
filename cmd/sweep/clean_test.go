@@ -526,6 +526,9 @@ func TestDryRunReadsTheConfiguration(t *testing.T) {
 				out := decodePlan(t, planPath)
 				var want []string
 				for _, c := range key.Candidates {
+					if !strings.HasPrefix(c.Path, key.Root+"/") {
+						continue
+					}
 					path := at(c.Path)
 					if staleBefore(t, filepath.Dir(path), path, days) {
 						want = append(want, path)
@@ -1041,6 +1044,9 @@ func splitByAge(t *testing.T, key answerKey, at func(string) string) (stale, rec
 	t.Helper()
 	limit := time.Now().Add(-30 * 24 * time.Hour)
 	for _, c := range key.Candidates {
+		if !strings.HasPrefix(c.Path, key.Root+"/") {
+			continue
+		}
 		path := at(c.Path)
 		used := newestOutside(t, filepath.Dir(path), path)
 		if used.Before(limit) {

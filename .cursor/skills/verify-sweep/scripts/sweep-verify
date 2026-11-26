@@ -210,7 +210,9 @@ cmd_run() {
 	listing "$run/fixture" > "$out/fixture-before.txt"
 	touch "$out/.started"
 	set +e
-	(cd "$dir" && "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
+	# Shared caches are Roots inside the home directory. The Fixture's home
+	# is the only home a run may use.
+	(cd "$dir" && HOME="$run/fixture/home" USERPROFILE="$run/fixture/home" "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
 	status=$?
 	set -e
 	printf '%s\n' "$status" > "$out/status"

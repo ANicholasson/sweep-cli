@@ -11,6 +11,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
@@ -22,6 +23,12 @@ import (
 type UnknownPath struct{ Path string }
 
 func (e UnknownPath) Error() string { return e.Path + " is not a Candidate" }
+
+// UnknownEcosystem is an Ecosystem named for a Pick that has no Shared cache
+// in the Scan.
+type UnknownEcosystem struct{ Name string }
+
+func (e UnknownEcosystem) Error() string { return e.Name + " has no Shared cache" }
 
 // Fingerprint is what a Plan records about one Candidate so a later Clean
 // can see that the Candidate changed. ID is the file identity of the
@@ -61,17 +68,22 @@ type Choice struct {
 // Kinds and Ecosystems narrow the choice; an empty list does not. AnyAge
 // chooses every Candidate those lists allow. StaleNamed means this Scan's
 // threshold was given as --stale-days, and the reason uses Result.StaleAfter.
+// Caches are Ecosystems named with --pick-caches. A Shared cache of one of
+// them is picked. An Ecosystem in Caches with no Shared cache in the Scan
+// is an UnknownEcosystem. None of the narrowing choices picks a Shared cache.
 type Pick struct {
 	Named      []string
 	Kinds      []domain.Kind
 	Ecosystems []string
+	Caches     []string
 	AnyAge     bool
 	StaleNamed bool
 }
 
 // Build chooses the Candidates one Plan will act on. A path in pick.Named
 // is matched by file identity. A path that is not a Candidate is an
-// UnknownPath. A Shared cache is chosen only when it is named.
+// UnknownPath. A Shared cache is chosen when it is named, or when its
+// Ecosystem is in pick.Caches. One that is left out is "choose it yourself".
 func Build(files scan.Files, result scan.Result, pick Pick) (Plan, []Choice, error) {
 	type namedFile struct {
 		path string
@@ -89,6 +101,7 @@ func Build(files scan.Files, result scan.Result, pick Pick) (Plan, []Choice, err
 	}
 
 	seen := map[scan.FileID]bool{}
+	seenEco := map[string]bool{}
 	var choices []Choice
 	var picked []Picked
 	for _, c := range result.Candidates {
@@ -99,6 +112,9 @@ func Build(files scan.Files, result scan.Result, pick Pick) (Plan, []Choice, err
 		chosen := namedID[space.File]
 		if chosen {
 			seen[space.File] = true
+		}
+		if c.Rule.SharedCache() {
+			seenEco[strings.ToLower(c.Ecosystem)] = true
 		}
 		take, reason := decide(c, chosen, pick, result.StaleAfter)
 		choices = append(choices, Choice{Candidate: c, Picked: take, Reason: reason})
@@ -116,6 +132,11 @@ func Build(files scan.Files, result scan.Result, pick Pick) (Plan, []Choice, err
 			return Plan{}, nil, UnknownPath{Path: w.path}
 		}
 	}
+	for _, name := range pick.Caches {
+		if !seenEco[strings.ToLower(name)] {
+			return Plan{}, nil, UnknownEcosystem{Name: name}
+		}
+	}
 	return Plan{Roots: append([]domain.Root(nil), result.Roots...), Picked: picked}, choices, nil
 }
 
@@ -124,7 +145,10 @@ func decide(c domain.Candidate, named bool, pick Pick, staleAfter time.Duration)
 		return true, "named with --pick"
 	}
 	if c.Rule.SharedCache() {
-		return false, "Shared cache"
+		if ecosystemNamed(pick.Caches, c.Ecosystem) {
+			return true, "named with --pick-caches"
+		}
+		return false, "choose it yourself"
 	}
 	if len(pick.Kinds) > 0 && !slices.Contains(pick.Kinds, c.Rule.Kind) {
 		return false, "not named with --kind"
@@ -146,6 +170,15 @@ func decide(c domain.Candidate, named bool, pick Pick, staleAfter time.Duration)
 		return true, "Stale"
 	}
 	return false, "used recently"
+}
+
+func ecosystemNamed(names []string, ecosystem string) bool {
+	for _, name := range names {
+		if strings.EqualFold(name, ecosystem) {
+			return true
+		}
+	}
+	return false
 }
 
 // FingerprintOf measures path the way a Plan records it. Size counts each
