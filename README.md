@@ -23,7 +23,8 @@ takes the newest modification inside it. The Scan leaves out a path that
 holds a file git tracks, and a path when git is missing or cannot answer.
 A path outside a work tree is still listed, and so is a path inside one
 that holds nothing git tracks. It leaves out a path on the Ignore list,
-and everything beneath it. It prints the configuration file it read, or
+and everything beneath it, from the report. Last used still counts the
+files there, so an Ignore does not by itself make a Candidate Stale. It prints the configuration file it read, or
 `none`, and the Roots it used, and it changes nothing. `--json` prints the
 same as one JSON document with a `version` field and a `configuration`
 field, and each Candidate carries its Project's path, `last_used` and

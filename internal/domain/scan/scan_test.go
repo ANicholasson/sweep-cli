@@ -385,15 +385,16 @@ func TestAnIgnoredPathIsLeftOut(t *testing.T) {
 		"keep/node_modules/a.js":       sweeptest.File{Bytes: 1},
 		"keep-extra/package.json":      sweeptest.File{Bytes: 1, Modified: scanNow.Add(-time.Hour)},
 		"keep-extra/node_modules/a.js": sweeptest.File{Bytes: 1},
-		"drop/package.json":            sweeptest.File{Bytes: 1},
+		"drop/package.json":            sweeptest.File{Bytes: 1, Modified: scanNow.Add(-100 * 24 * time.Hour)},
+		"drop/src/new.js":              sweeptest.File{Bytes: 1, Modified: scanNow.Add(-time.Minute)},
 		"drop/node_modules/a.js":       sweeptest.File{Bytes: 1},
 		"drop/sealed/x.js":             sweeptest.File{Bytes: 1},
 	})
 	files.Unreadable("drop/sealed", errors.New("permission denied"))
 
 	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{web}, scanNow, scan.Settings{
-		StaleAfter: time.Hour,
-		Ignore:     []string{sweeptest.Top + "/keep", sweeptest.Top + "/drop/sealed"},
+		StaleAfter: domain.StaleAfter,
+		Ignore:     []string{sweeptest.Top + "/keep", sweeptest.Top + "/drop/src", sweeptest.Top + "/drop/sealed"},
 	})
 
 	want := sweeptest.Top + "/keep-extra/node_modules"
@@ -407,12 +408,12 @@ func TestAnIgnoredPathIsLeftOut(t *testing.T) {
 		case want:
 			sawKeepExtra = true
 			if c.Stale {
-				t.Errorf("%s is Stale, and its Last used is inside the threshold of one hour", c.Path)
+				t.Errorf("%s is Stale, and its Last used is inside the Stale threshold", c.Path)
 			}
 		case drop:
 			sawDrop = true
-			if !c.Stale {
-				t.Errorf("%s is not Stale, and its Last used is the zero time, before the threshold", c.Path)
+			if !c.LastUsed.Equal(scanNow.Add(-time.Minute)) || c.Stale {
+				t.Errorf("%s Last used %s, Stale %v, want the ignored source file's time and not Stale", c.Path, c.LastUsed, c.Stale)
 			}
 		default:
 			t.Errorf("%s is listed, and it is ignored or beneath an ignored path", c.Path)

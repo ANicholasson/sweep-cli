@@ -76,9 +76,11 @@ type Settings struct {
 // what was not seen. Otherwise it is Stale when its Last used is older
 // than StaleAfter before now.
 //
-// A path on the Ignore list, and everything beneath it, is left out. It is
-// not a Candidate, and a path beneath it that could not be read is not
-// reported. A path that only shares a prefix with an ignored path is kept.
+// A path on the Ignore list, and everything beneath it, is left out of
+// the report. It is not a Candidate, and a path beneath it that could not
+// be read is not reported. Last used still counts the files there, so an
+// Ignore does not by itself change whether a Candidate is Stale. A path
+// that only shares a prefix with an ignored path is kept.
 //
 // Docker data is asked once, for the whole machine, and set on the Result.
 // It is not a Candidate. Docker missing or not answering is that value's
@@ -221,19 +223,19 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 	walk = func(dir string) {
 		entries, err := s.files.List(dir)
 		if err != nil {
-			s.noteUnread(dir, err)
+			s.missed(dir, err)
 			blocked = true
 			return
 		}
 		for _, e := range entries {
-			if s.ignored(e.Path) || !safety.Beneath(top, e.Path, e.Is == Link) {
+			if !safety.Beneath(top, e.Path, e.Is == Link) {
 				continue
 			}
 			switch e.Is {
 			case Dir:
 				space, err := s.files.Space(e.Path)
 				if err != nil {
-					s.noteUnread(e.Path, err)
+					s.missed(e.Path, err)
 					blocked = true
 					continue
 				}
@@ -244,7 +246,7 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 			case File:
 				mod, err := s.files.Modified(e.Path)
 				if err != nil {
-					s.noteUnread(e.Path, err)
+					s.missed(e.Path, err)
 					blocked = true
 					continue
 				}
@@ -256,6 +258,15 @@ func (s *scanner) newest(top string, skip map[FileID]bool) (time.Time, bool) {
 	}
 	walk(top)
 	return newest, blocked
+}
+
+// missed records a path the Scan could not read. An ignored path is left
+// out of that report. The caller still treats the failure as unseen, so a
+// Candidate is not Stale when recent work could be in what was not read.
+func (s *scanner) missed(path string, err error) {
+	if !s.ignored(path) {
+		s.noteUnread(path, err)
+	}
 }
 
 func (s *scanner) ignored(path string) bool {
@@ -287,7 +298,7 @@ func (s *scanner) size(root, path string, own Space) domain.Size {
 	add = func(dir string) {
 		entries, err := s.files.List(dir)
 		if err != nil {
-			s.unread(dir, err)
+			s.missed(dir, err)
 			return
 		}
 		for _, e := range entries {
@@ -296,7 +307,7 @@ func (s *scanner) size(root, path string, own Space) domain.Size {
 			}
 			space, err := s.files.Space(e.Path)
 			if err != nil {
-				s.unread(e.Path, err)
+				s.missed(e.Path, err)
 				continue
 			}
 			if counted[space.File] {

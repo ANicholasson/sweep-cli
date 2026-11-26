@@ -199,6 +199,92 @@ func TestConfiguration(t *testing.T) {
 	})
 }
 
+func TestAnIgnoredFileStillCountsForLastUsed(t *testing.T) {
+	b := build(t)
+	top := t.TempDir()
+	b.config = filepath.Join(top, "config")
+	app := filepath.Join(top, "app")
+	old := time.Now().Add(-100 * 24 * time.Hour)
+	recent := time.Now().Add(-time.Hour)
+	for _, rel := range []string{"package.json", "src/new.js", "node_modules/a/index.js"} {
+		p := filepath.Join(app, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		when := old
+		if rel == "src/new.js" {
+			when = recent
+		}
+		if err := os.Chtimes(p, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidate := filepath.Join(app, "node_modules")
+	src := filepath.Join(app, "src")
+	want := newestOutside(t, app, candidate)
+	wantStale := want.Before(time.Now().Add(-30 * 24 * time.Hour))
+
+	one := func() scanJSON {
+		t.Helper()
+		got := b.run(t, top, "scan", "--json", app)
+		if got.status != 0 || got.stderr != "" {
+			t.Fatalf("exit status %d, stderr %q, stdout %s", got.status, got.stderr, got.stdout)
+		}
+		out := decode(t, got)
+		if len(out.Candidates) != 1 || !sameDir(t, out.Candidates[0].Path, candidate) {
+			t.Fatalf("candidates = %+v, want %s", out.Candidates, candidate)
+		}
+		return out
+	}
+	first := one()
+	if !first.Candidates[0].LastUsed.Equal(want) || first.Candidates[0].Stale != wantStale {
+		t.Fatalf("without Ignore, Last used = %s, Stale = %v, want %s and %v", first.Candidates[0].LastUsed, first.Candidates[0].Stale, want, wantStale)
+	}
+
+	writeConfig(t, b.config, "ignore = ["+tomlPath(t, src)+"]\n")
+	second := one()
+	if !second.Candidates[0].LastUsed.Equal(want) || second.Candidates[0].Stale != wantStale {
+		t.Fatalf("with src ignored, Last used = %s, Stale = %v, want %s and %v", second.Candidates[0].LastUsed, second.Candidates[0].Stale, want, wantStale)
+	}
+	for _, u := range second.Unreadable {
+		if sameDir(t, u.Path, src) || strings.HasPrefix(u.Path, src+string(filepath.Separator)) {
+			t.Errorf("reported %s, which is ignored", u.Path)
+		}
+	}
+
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		return
+	}
+	sealed := filepath.Join(candidate, "sealed")
+	if err := os.MkdirAll(sealed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sealed, "x.js"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sealed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0o755) })
+	writeConfig(t, b.config, "ignore = ["+tomlPath(t, src)+", "+tomlPath(t, sealed)+"]\n")
+	got := b.run(t, top, "scan", "--json", app)
+	if got.status != 0 || got.stderr != "" {
+		t.Fatalf("exit status %d, stderr %q, stdout %s", got.status, got.stderr, got.stdout)
+	}
+	out := decode(t, got)
+	for _, u := range out.Unreadable {
+		if sameDir(t, u.Path, sealed) {
+			t.Errorf("reported %s, which is ignored", u.Path)
+		}
+	}
+	if len(out.Candidates) != 1 || !out.Candidates[0].LastUsed.Equal(want) || out.Candidates[0].Stale != wantStale {
+		t.Errorf("Last used = %s, Stale = %v, want %s and %v", out.Candidates[0].LastUsed, out.Candidates[0].Stale, want, wantStale)
+	}
+}
+
 func writeConfig(t *testing.T, home, body string) string {
 	t.Helper()
 	path := configurationFile(home)
