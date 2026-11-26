@@ -224,15 +224,17 @@ func TestRestorePutsTheOriginalAttributesBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := setAttributes(src, current|syscall.FILE_ATTRIBUTE_READONLY); err != nil {
+	const notIndexed = 0x2000
+	const temporary = 0x100
+	if err := setAttributes(src, current|syscall.FILE_ATTRIBUTE_READONLY|notIndexed|temporary); err != nil {
 		t.Fatal(err)
 	}
 	before, err := fileAttributes(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before&syscall.FILE_ATTRIBUTE_READONLY == 0 || before&syscall.FILE_ATTRIBUTE_HIDDEN != 0 {
-		t.Fatalf("attributes = %#x, want read-only and visible", before)
+	if before&syscall.FILE_ATTRIBUTE_READONLY == 0 || before&notIndexed == 0 || before&temporary == 0 || before&syscall.FILE_ATTRIBUTE_HIDDEN != 0 {
+		t.Fatalf("attributes = %#x, want read-only, not-content-indexed, temporary, and visible", before)
 	}
 	putBack(t, dir, src)
 	abs, err := filepath.Abs(src)

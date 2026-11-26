@@ -28,17 +28,13 @@ const (
 	fileOpenForBackup       = 0x00004000
 	fileOpenReparsePoint    = 0x00200000
 	objCaseInsensitive      = 0x00000040
-
-	// fileRenameInfoClass is FileRenameInfo. The rename stays on one volume.
-	// There is no copy flag, so a failure cannot become a delete.
-	fileRenameInfoClass = 3
 )
 
 var (
 	ntdll                 = syscall.NewLazyDLL("ntdll.dll")
 	ntCreateFile          = ntdll.NewProc("NtCreateFile")
 	rtlNtStatusToDosError = ntdll.NewProc("RtlNtStatusToDosError")
-	setFileInformation    = syscall.NewLazyDLL("kernel32.dll").NewProc("SetFileInformationByHandle")
+	moveFileEx            = syscall.NewLazyDLL("kernel32.dll").NewProc("MoveFileExW")
 )
 
 type ntUnicodeString struct {
@@ -72,21 +68,21 @@ func renameBetween(oldpath, oldRoot string, followOld bool, newpath, newRoot str
 	if err != nil {
 		return err
 	}
-	defer func() { _ = syscall.CloseHandle(oldParent) }()
 	src, err := openChild(oldParent, filepath.Base(oldpath))
 	if err != nil {
+		_ = syscall.CloseHandle(oldParent)
 		return err
 	}
-	defer func() { _ = syscall.CloseHandle(src) }()
+	_ = syscall.CloseHandle(src)
+	_ = syscall.CloseHandle(oldParent)
 	newParent, err := openParent(newpath, newRoot, followNew, destAccess)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = syscall.CloseHandle(newParent) }()
-	if err := renameHandle(src, newParent, filepath.Base(newpath)); err != nil {
-		return &os.PathError{Op: "move", Path: oldpath, Err: err}
-	}
-	return nil
+	_ = syscall.CloseHandle(newParent)
+	// The opens above refused a Link. MoveFileEx does not copy, so a
+	// different volume fails and the path stays where it was.
+	return moveSameVolume(oldpath, newpath)
 }
 
 const (
@@ -299,6 +295,24 @@ func ntErrno(status uintptr) error {
 	return syscall.Errno(r)
 }
 
+// moveSameVolume renames oldpath to newpath. No copy flag is set, so a
+// different volume is an error and oldpath is left in place.
+func moveSameVolume(oldpath, newpath string) error {
+	from, err := syscall.UTF16PtrFromString(long(oldpath))
+	if err != nil {
+		return err
+	}
+	to, err := syscall.UTF16PtrFromString(long(newpath))
+	if err != nil {
+		return err
+	}
+	r, _, callErr := moveFileEx.Call(uintptr(unsafe.Pointer(from)), uintptr(unsafe.Pointer(to)), 0)
+	if r == 0 {
+		return &os.PathError{Op: "move", Path: oldpath, Err: callErr}
+	}
+	return nil
+}
+
 func handleIsReparse(h syscall.Handle) (bool, error) {
 	info, err := handleInfo(h)
 	if err != nil {
@@ -321,52 +335,6 @@ func handleInfo(h syscall.Handle) (syscall.ByHandleFileInformation, error) {
 		return info, err
 	}
 	return info, nil
-}
-
-// renameHandle moves the open file into dstDir under name. Replace is off,
-// so an existing name is left alone. The call fails across volumes.
-func renameHandle(src, dstDir syscall.Handle, name string) error {
-	chars, err := syscall.UTF16FromString(name)
-	if err != nil {
-		return err
-	}
-	if len(chars) < 2 {
-		return errors.New("the destination has no name")
-	}
-	nameBytes := (len(chars) - 1) * 2
-	handleSize := int(unsafe.Sizeof(syscall.Handle(0)))
-	rootOff := 4
-	if rem := rootOff % handleSize; rem != 0 {
-		rootOff += handleSize - rem
-	}
-	lenOff := rootOff + handleSize
-	fileOff := lenOff + 4
-	if fileOff%2 != 0 {
-		fileOff++
-	}
-	need := fileOff + len(chars)*2
-	raw := make([]byte, need+handleSize)
-	align := int(uintptr(unsafe.Pointer(&raw[0])) % uintptr(handleSize))
-	pad := 0
-	if align != 0 {
-		pad = handleSize - align
-	}
-	buf := raw[pad : pad+need]
-	*(*syscall.Handle)(unsafe.Pointer(&buf[rootOff])) = dstDir
-	buf[lenOff] = byte(nameBytes)
-	buf[lenOff+1] = byte(nameBytes >> 8)
-	buf[lenOff+2] = byte(nameBytes >> 16)
-	buf[lenOff+3] = byte(nameBytes >> 24)
-	for i, c := range chars {
-		buf[fileOff+i*2] = byte(c)
-		buf[fileOff+i*2+1] = byte(c >> 8)
-	}
-	r, _, callErr := setFileInformation.Call(uintptr(src), fileRenameInfoClass, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-	runtime.KeepAlive(buf)
-	if r == 0 {
-		return callErr
-	}
-	return nil
 }
 
 // long gives a path the prefix that lifts the 260-character limit.

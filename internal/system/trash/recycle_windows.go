@@ -32,14 +32,6 @@ const (
 	shcnfPathW     = 0x0005
 )
 
-// keptAttributeMask is the attributes SetFileAttributes can put back.
-// Directory and reparse bits are reported by GetFileAttributes and are not
-// part of that set.
-const keptAttributeMask = syscall.FILE_ATTRIBUTE_READONLY |
-	syscall.FILE_ATTRIBUTE_HIDDEN |
-	syscall.FILE_ATTRIBUTE_SYSTEM |
-	syscall.FILE_ATTRIBUTE_ARCHIVE
-
 var (
 	getVolumePathName = syscall.NewLazyDLL("kernel32.dll").NewProc("GetVolumePathNameW")
 	setFileAttributes = syscall.NewLazyDLL("kernel32.dll").NewProc("SetFileAttributesW")
@@ -353,7 +345,22 @@ func fileAttributes(path string) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	got := attr & keptAttributeMask
+	// These bits are reported by GetFileAttributes and rejected by
+	// SetFileAttributes. Every other recorded bit is written back.
+	const cannotSet = syscall.FILE_ATTRIBUTE_DIRECTORY |
+		syscall.FILE_ATTRIBUTE_REPARSE_POINT |
+		0x40 | // device
+		0x200 | // sparse
+		0x800 | // compressed
+		0x4000 | // encrypted
+		0x8000 | // integrity stream
+		0x10000 | // virtual
+		0x20000 | // no scrub
+		0x40000 | // recall on open
+		0x80000 | // pinned
+		0x100000 | // unpinned
+		0x400000 // recall on data access
+	got := attr &^ cannotSet
 	if got == 0 {
 		return syscall.FILE_ATTRIBUTE_NORMAL, nil
 	}
