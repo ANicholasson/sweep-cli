@@ -97,6 +97,7 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 		listed: map[FileID]bool{},
 		inside: map[FileID]bool{},
 		ignore: settings.Ignore,
+		formOf: map[string]string{},
 	}
 	for _, root := range roots {
 		s.enter(string(root), string(root))
@@ -122,6 +123,7 @@ type scanner struct {
 	listed map[FileID]bool
 	inside map[FileID]bool
 	ignore []string
+	formOf map[string]string
 
 	found      []found
 	unreadable []Unreadable
@@ -269,13 +271,37 @@ func (s *scanner) missed(path string, err error) {
 	}
 }
 
+// eachLink follows every Link in a path. The files adapter has it. A fake
+// does not, and then an Ignore path is compared as written.
+type eachLink interface {
+	EachLink(string) (string, error)
+}
+
 func (s *scanner) ignored(path string) bool {
-	for _, root := range s.ignore {
-		if safety.Beneath(root, path, false) {
+	walked := s.form(path)
+	for _, p := range s.ignore {
+		if safety.Beneath(p, path, false) || safety.Beneath(s.form(p), walked, false) {
 			return true
 		}
 	}
 	return false
+}
+
+// form is path with every Link followed, when the files port can follow
+// them. An Ignore path and a walked path are compared in that form, because
+// a Root keeps an earlier Link in the caller's spelling.
+func (s *scanner) form(path string) string {
+	if got, ok := s.formOf[path]; ok {
+		return got
+	}
+	out := path
+	if links, ok := s.files.(eachLink); ok {
+		if full, err := links.EachLink(path); err == nil {
+			out = full
+		}
+	}
+	s.formOf[path] = out
+	return out
 }
 
 // noteUnread records a path the Last used walk could not read, unless that

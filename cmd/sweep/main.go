@@ -75,7 +75,7 @@ func scanCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	cfg, err := configuration()
 	if err != nil {
-		writeErr(stderr, err)
+		say(stderr, err)
 		return misused
 	}
 	if len(given) == 0 {
@@ -147,7 +147,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	}
 
 	disk := files.Disk{}
-	result := scan.Scan(disk, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now())
+	result := scan.Scan(disk, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), scan.Settings{StaleAfter: domain.StaleAfter})
 	built, choices, err := plan.Build(disk, result, named)
 	if err != nil {
 		var unknown plan.UnknownPath
@@ -327,10 +327,14 @@ func parseInterspersed(flags *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
+// resolveIgnore checks that each path can be followed. The caller's
+// spelling is kept. The Scan compares that spelling and the walked path
+// after every Link in both has been followed, because a Root keeps an
+// earlier Link in the caller's spelling.
 func resolveIgnore(paths []string) ([]string, error) {
 	out := make([]string, len(paths))
 	for i, p := range paths {
-		resolved, err := files.ResolveDir(p)
+		_, err := files.ResolveDir(p)
 		if errors.Is(err, os.ErrNotExist) {
 			out[i] = p
 			continue
@@ -338,7 +342,7 @@ func resolveIgnore(paths []string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s cannot be ignored: %w", p, err)
 		}
-		out[i] = resolved
+		out[i] = p
 	}
 	return out, nil
 }

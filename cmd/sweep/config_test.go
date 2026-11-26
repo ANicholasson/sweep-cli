@@ -325,6 +325,18 @@ func TestAnIgnorePathThroughALinkIsApplied(t *testing.T) {
 	if seen(t, scan(link), candidate) {
 		t.Fatal("listed the Candidate under the Link Root")
 	}
+
+	// A Root reached through a Link keeps that spelling. The Ignore path
+	// uses it too, and must still match after every Link is followed.
+	via := filepath.Join(top, "via")
+	if err := os.Symlink(top, via); err != nil {
+		t.Fatal(err)
+	}
+	through := filepath.Join(via, "stale", "plain")
+	writeConfig(t, b.config, "ignore = ["+tomlPath(t, candidate)+"]\n")
+	if seen(t, scan(through), candidate) {
+		t.Fatal("listed the Candidate, and the walked path still contains a Link")
+	}
 }
 
 func writeConfig(t *testing.T, home, body string) string {
