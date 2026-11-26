@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
@@ -268,14 +269,14 @@ func Unmarshal(data []byte) (Plan, error) {
 	}
 	out := Plan{Roots: []domain.Root{}, Picked: []Picked{}}
 	for _, root := range raw.Roots {
-		if root == "" {
-			return Plan{}, errors.New("the Plan is malformed")
+		if err := plainPath(root); err != nil {
+			return Plan{}, err
 		}
 		out.Roots = append(out.Roots, domain.Root(root))
 	}
 	for _, c := range raw.Candidates {
-		if c.Path == "" {
-			return Plan{}, errors.New("the Plan is malformed")
+		if err := plainPath(c.Path); err != nil {
+			return Plan{}, err
 		}
 		out.Picked = append(out.Picked, Picked{
 			Path: c.Path,
@@ -288,4 +289,18 @@ func Unmarshal(data []byte) (Plan, error) {
 		})
 	}
 	return out, nil
+}
+
+// plainPath accepts only an absolute path that filepath.Clean would leave
+// unchanged. A ".." is cleaned in the text of the path before a move, and
+// followed by the kernel when a rule is re-checked, so the two can name
+// different directories when a Link is on the way. Such a path is refused.
+func plainPath(p string) error {
+	if p == "" {
+		return errors.New("the Plan is malformed")
+	}
+	if !filepath.IsAbs(p) || filepath.Clean(p) != p {
+		return fmt.Errorf("the Plan path %s is not a clean absolute path", p)
+	}
+	return nil
 }

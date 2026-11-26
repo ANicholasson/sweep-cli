@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,6 +230,98 @@ func TestCleanSkipsWhenADirectoryAboveBecomesALink(t *testing.T) {
 	}
 	if strings.Contains(got.stdout, "Moved to trash: 1") {
 		t.Errorf("a Candidate was moved:\n%s", got.stdout)
+	}
+}
+
+func TestCleanRefusesAPlanPathThatIsNotClean(t *testing.T) {
+	b := build(t)
+	dir, _ := b.buildFixture(t)
+	b.data = filepath.Join(t.TempDir(), "trash-home")
+	root := filepath.Join(dir, "projects")
+	sep := string(filepath.Separator)
+	outside := filepath.Join(t.TempDir(), "deep")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "a")
+	if err := os.Symlink(outside, link); err != nil && runtime.GOOS == "windows" {
+		out, jerr := exec.Command("cmd", "/c", "mklink", "/J", link, outside).CombinedOutput()
+		if jerr != nil {
+			t.Fatalf("mklink /J: %v: %s", jerr, out)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	dirty := root + sep + "a" + sep + ".." + sep + "tracked-app" + sep + "node_modules"
+	tracked := filepath.Join(root, "tracked-app", "node_modules", "fake-gamma", "index.js")
+	kept, err := os.ReadFile(tracked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := listing(t, dir)
+	planPath := filepath.Join(t.TempDir(), "plan.json")
+	body := fmt.Sprintf("{\"version\":1,\"roots\":[%q],\"candidates\":[{\"path\":%q,\"fingerprint\":{\"identity\":{\"volume\":1,\"file\":1},\"entries\":1,\"size\":1,\"newest\":\"2026-01-01T00:00:00Z\"}}]}\n", root, dirty)
+	if err := os.WriteFile(planPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := b.run(t, dir, "clean", "--plan", planPath)
+	if got.status != 2 || got.stdout != "" || !strings.Contains(got.stderr, dirty) {
+		t.Fatalf("exit %d, stdout %q, stderr %q, want a refusal that names %s", got.status, got.stdout, got.stderr, dirty)
+	}
+	again, err := os.ReadFile(tracked)
+	if err != nil || string(again) != string(kept) {
+		t.Errorf("the tracked file changed: %q, %v", again, err)
+	}
+	for _, d := range differences(before, listing(t, dir)) {
+		t.Errorf("the Fixture changed: %s", d)
+	}
+}
+
+func TestCleanFollowsALinkAboveTheTrash(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux moves a Candidate to the trash")
+	}
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	b.data = link
+	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
+	note := at("projects/stale-app/node_modules/fake-old/note.txt")
+	saved, err := os.ReadFile(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(t.TempDir(), "plan.json")
+	dry := b.run(t, dir, "clean", "--dry-run", "--plan", planPath, at(key.Root))
+	if dry.status != 0 || dry.stderr != "" {
+		t.Fatalf("dry run exit %d, stderr %q", dry.status, dry.stderr)
+	}
+	got := b.run(t, dir, "clean", "--plan", planPath)
+	if got.status != 0 || strings.Contains(got.stdout, "not a directory") || strings.Contains(got.stderr, "not a directory") {
+		t.Fatalf("exit %d, stdout %q, stderr %q, want the Candidate moved through the Link", got.status, got.stdout, got.stderr)
+	}
+	stale := at("projects/stale-app/node_modules")
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Fatalf("the Candidate is still in place: %v", err)
+	}
+	landed := trashedCopy(t, real, stale)
+	gotNote, err := os.ReadFile(filepath.Join(landed, "fake-old", "note.txt"))
+	if err != nil || string(gotNote) != string(saved) {
+		t.Fatalf("the trashed note is %q, %v", gotNote, err)
+	}
+	if err := os.Rename(landed, stale); err != nil {
+		t.Fatal(err)
+	}
+	back, err := os.ReadFile(note)
+	if err != nil || string(back) != string(saved) {
+		t.Errorf("putting the Candidate back gave %q, %v", back, err)
 	}
 }
 

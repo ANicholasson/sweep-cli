@@ -115,8 +115,9 @@ failed. Space that was moved is not called reclaimed.
 
 The exit status is 0 when every Candidate in the Plan was moved, 1 when a
 Candidate was skipped or could not be moved, and 2 when the Plan is missing
-from the command, is malformed or has an unknown version, or this operating
-system has no trash yet. macOS and Windows refuse before anything is moved.
+from the command, is malformed or has an unknown version, a Root or a
+Candidate is not a clean absolute path, or this operating system has no
+trash yet. macOS and Windows refuse before anything is moved.
 A refused Clean removes nothing.
 
 ## Safety rules
