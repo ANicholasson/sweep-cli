@@ -213,6 +213,62 @@ func TestALongPathMovesIntoAPrivateTrash(t *testing.T) {
 	}
 }
 
+func TestRestorePutsTheOriginalAttributesBack(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	dir := t.TempDir()
+	src := filepath.Join(dir, "keep.txt")
+	if err := os.WriteFile(src, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current, err := fileAttributes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setAttributes(src, current|syscall.FILE_ATTRIBUTE_READONLY); err != nil {
+		t.Fatal(err)
+	}
+	before, err := fileAttributes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before&syscall.FILE_ATTRIBUTE_READONLY == 0 || before&syscall.FILE_ATTRIBUTE_HIDDEN != 0 {
+		t.Fatalf("attributes = %#x, want read-only and visible", before)
+	}
+	putBack(t, dir, src)
+	abs, err := filepath.Abs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bin(t).Move(dir, src); err != nil {
+		t.Fatal(err)
+	}
+	home, err := recycleBin(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := fileAttributes(filepath.Join(home, "$R"+recycledSuffix(t, home, abs)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held&syscall.FILE_ATTRIBUTE_READONLY == 0 || held == syscall.FILE_ATTRIBUTE_HIDDEN {
+		t.Errorf("attributes in the Recycle Bin = %#x, want the original %#x", held, before)
+	}
+	if err := bin(t).Restore(dir, src); err != nil {
+		t.Fatal(err)
+	}
+	after, err := fileAttributes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("attributes after restore = %#x, want %#x", after, before)
+	}
+	got, err := os.ReadFile(src)
+	if err != nil || string(got) != "keep\n" {
+		t.Fatalf("restored %q, %v", got, err)
+	}
+}
+
 func TestATrashedFileAppearsInTheRecycleBin(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "")
 	dir := t.TempDir()
@@ -245,7 +301,7 @@ func TestATrashedFileAppearsInTheRecycleBin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotPath, _, ok := parseRecycleInfo(info)
+	gotPath, _, _, ok := parseRecycleInfo(info)
 	if !ok || gotPath != abs {
 		t.Fatalf("recycle info path = %q, ok %v, want %s", gotPath, ok, abs)
 	}
@@ -467,7 +523,7 @@ func putBack(t *testing.T, root, path string) {
 
 func recycledSuffix(t *testing.T, binDir, abs string) string {
 	t.Helper()
-	suffix, err := findRecycled(binDir, abs)
+	suffix, _, err := findRecycled(binDir, abs)
 	if err != nil {
 		t.Fatal(err)
 	}

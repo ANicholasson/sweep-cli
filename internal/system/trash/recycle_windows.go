@@ -28,8 +28,15 @@ const (
 	shcneDelete    = 0x00000004
 	shcneUpdateDir = 0x00001000
 	shcnfPathW     = 0x0005
-	fileAttrHidden = 2
 )
+
+// keptAttributeMask is the attributes SetFileAttributes can put back.
+// Directory and reparse bits are reported by GetFileAttributes and are not
+// part of that set.
+const keptAttributeMask = syscall.FILE_ATTRIBUTE_READONLY |
+	syscall.FILE_ATTRIBUTE_HIDDEN |
+	syscall.FILE_ATTRIBUTE_SYSTEM |
+	syscall.FILE_ATTRIBUTE_ARCHIVE
 
 var (
 	getVolumePathName = syscall.NewLazyDLL("kernel32.dll").NewProc("GetVolumePathNameW")
@@ -46,6 +53,10 @@ func recycleMove(root, path string) error {
 	if err != nil {
 		return err
 	}
+	attr, err := fileAttributes(abs)
+	if err != nil {
+		return err
+	}
 	bin, err := recycleBin(abs)
 	if err != nil {
 		return err
@@ -53,7 +64,7 @@ func recycleMove(root, path string) error {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		return err
 	}
-	suffix, iPath, err := claimInfo(bin, info.Name(), abs, info)
+	suffix, iPath, err := claimInfo(bin, info.Name(), abs, info, attr)
 	if err != nil {
 		return err
 	}
@@ -62,8 +73,9 @@ func recycleMove(root, path string) error {
 		_ = os.Remove(iPath)
 		return err
 	}
-	hide(iPath)
-	hide(dest)
+	// The index file is one this move created. The Candidate keeps the
+	// attributes it had.
+	hideInfo(iPath)
 	notify(shcneDelete, abs)
 	notify(shcneUpdateDir, bin)
 	return nil
@@ -83,12 +95,15 @@ func recycleRestore(root, path string) error {
 	if err != nil {
 		return err
 	}
-	suffix, err := findRecycled(bin, abs)
+	suffix, attr, err := findRecycled(bin, abs)
 	if err != nil {
 		return err
 	}
 	src := filepath.Join(bin, "$R"+suffix)
 	if err := renameBetween(src, "", true, abs, root, false); err != nil {
+		return err
+	}
+	if err := setAttributes(abs, attr); err != nil {
 		return err
 	}
 	if err := os.Remove(filepath.Join(bin, "$I"+suffix)); err != nil {
@@ -178,7 +193,7 @@ func currentSID() (string, error) {
 
 // claimInfo writes the $I file and returns the shared suffix of the pair.
 // The Candidate is still in place when this returns.
-func claimInfo(bin, base, abs string, info os.FileInfo) (string, string, error) {
+func claimInfo(bin, base, abs string, info os.FileInfo, attr uint32) (string, string, error) {
 	ext := filepath.Ext(base)
 	if len(ext) > 16 {
 		ext = ""
@@ -194,7 +209,7 @@ func claimInfo(bin, base, abs string, info os.FileInfo) (string, string, error) 
 		if exists(iPath) || exists(rPath) {
 			continue
 		}
-		if err := writeInfo(iPath, abs, fileSize(info)); err != nil {
+		if err := writeInfo(iPath, abs, fileSize(info), attr); err != nil {
 			if errors.Is(err, os.ErrExist) {
 				continue
 			}
@@ -227,9 +242,10 @@ func randomID() (string, error) {
 
 // writeInfo writes a version-2 $I file. The path length counts UTF-16
 // code units and includes the trailing NUL, which is the Windows 10 layout.
-func writeInfo(path, original string, size uint64) error {
+// Four bytes after the path are the Candidate's settable attributes.
+func writeInfo(path, original string, size uint64, attr uint32) error {
 	encoded := utf16.Encode([]rune(original + "\x00"))
-	buf := make([]byte, 28+len(encoded)*2)
+	buf := make([]byte, 28+len(encoded)*2+4)
 	binary.LittleEndian.PutUint64(buf[0:], recycleVersion)
 	binary.LittleEndian.PutUint64(buf[8:], size)
 	binary.LittleEndian.PutUint64(buf[16:], nowFiletime())
@@ -237,6 +253,7 @@ func writeInfo(path, original string, size uint64) error {
 	for i, u := range encoded {
 		binary.LittleEndian.PutUint16(buf[28+i*2:], u)
 	}
+	binary.LittleEndian.PutUint32(buf[28+len(encoded)*2:], uint32(attr))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -260,13 +277,14 @@ func nowFiletime() uint64 {
 	return uint64(time.Now().UnixNano()/100) + windowsToUnix
 }
 
-func findRecycled(bin, abs string) (string, error) {
+func findRecycled(bin, abs string) (string, uint32, error) {
 	entries, err := os.ReadDir(bin)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var bestWhen uint64
 	var best string
+	var bestAttr uint32
 	var found bool
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "$I") {
@@ -274,9 +292,9 @@ func findRecycled(bin, abs string) (string, error) {
 		}
 		data, err := os.ReadFile(filepath.Join(bin, e.Name()))
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
-		got, when, ok := parseRecycleInfo(data)
+		got, when, attr, ok := parseRecycleInfo(data)
 		if !ok || got != abs {
 			continue
 		}
@@ -284,40 +302,75 @@ func findRecycled(bin, abs string) (string, error) {
 			found = true
 			bestWhen = when
 			best = strings.TrimPrefix(e.Name(), "$I")
+			bestAttr = attr
 		}
 	}
 	if !found {
-		return "", fmt.Errorf("%s is not in the trash", abs)
+		return "", 0, fmt.Errorf("%s is not in the trash", abs)
 	}
-	return best, nil
+	return best, bestAttr, nil
 }
 
-func parseRecycleInfo(data []byte) (path string, when uint64, ok bool) {
+func parseRecycleInfo(data []byte) (path string, when uint64, attr uint32, ok bool) {
 	if len(data) < 28 {
-		return "", 0, false
+		return "", 0, 0, false
 	}
 	if binary.LittleEndian.Uint64(data[0:8]) != recycleVersion {
-		return "", 0, false
+		return "", 0, 0, false
 	}
 	when = binary.LittleEndian.Uint64(data[16:24])
 	n := binary.LittleEndian.Uint32(data[24:28])
-	if n == 0 || int(n) > (len(data)-28)/2 {
-		return "", 0, false
+	end := 28 + int(n)*2
+	if n == 0 || end > len(data) {
+		return "", 0, 0, false
 	}
 	chars := make([]uint16, n)
 	for i := range chars {
 		chars[i] = binary.LittleEndian.Uint16(data[28+i*2:])
 	}
 	path = strings.TrimRight(string(utf16.Decode(chars)), "\x00")
-	return path, when, path != ""
+	if path == "" {
+		return "", 0, 0, false
+	}
+	if len(data) >= end+4 {
+		attr = binary.LittleEndian.Uint32(data[end : end+4])
+	}
+	return path, when, attr, true
 }
 
-func hide(path string) {
+func fileAttributes(path string) (uint32, error) {
 	p, err := syscall.UTF16PtrFromString(long(path))
 	if err != nil {
-		return
+		return 0, err
 	}
-	_, _, _ = setFileAttributes.Call(uintptr(unsafe.Pointer(p)), fileAttrHidden)
+	attr, err := syscall.GetFileAttributes(p)
+	if err != nil {
+		return 0, err
+	}
+	got := attr & keptAttributeMask
+	if got == 0 {
+		return syscall.FILE_ATTRIBUTE_NORMAL, nil
+	}
+	return got, nil
+}
+
+func setAttributes(path string, attr uint32) error {
+	if attr == 0 {
+		return nil
+	}
+	p, err := syscall.UTF16PtrFromString(long(path))
+	if err != nil {
+		return err
+	}
+	r, _, callErr := setFileAttributes.Call(uintptr(unsafe.Pointer(p)), uintptr(attr))
+	if r == 0 {
+		return callErr
+	}
+	return nil
+}
+
+func hideInfo(path string) {
+	_ = setAttributes(path, syscall.FILE_ATTRIBUTE_HIDDEN)
 }
 
 func notify(event uintptr, path string) {
