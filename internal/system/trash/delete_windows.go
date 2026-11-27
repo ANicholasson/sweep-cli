@@ -32,7 +32,7 @@ func removeRelative(parent syscall.Handle, name string) error {
 	if name == "" || name == "." || name == ".." {
 		return &os.PathError{Op: "delete", Path: name, Err: errors.New("a component has no usable name")}
 	}
-	h, err := openRelative(parent, name, deleteAccess|fileListDirectory|fileTraverse|fileReadAttributes|synchronize|standardRightsRead, childOptions)
+	h, err := openRelative(parent, name, deleteAccess|fileListDirectory|fileTraverse|fileReadAttributes|fileWriteAttributes|synchronize|standardRightsRead, childOptions)
 	if err != nil {
 		return err
 	}
@@ -100,15 +100,82 @@ func listNames(h syscall.Handle) ([]string, error) {
 	}
 }
 
+const (
+	fileBasicInformation         = 4
+	fileDispositionInformation   = 13
+	fileDispositionInformationEx = 64
+
+	fileDispositionDelete         = 0x1
+	fileDispositionIgnoreReadOnly = 0x10
+
+	statusInvalidInfoClass = 0xC0000003
+	statusInvalidParameter = 0xC000000D
+	statusNotSupported     = 0xC00000BB
+)
+
+const fileWriteAttributes = 0x00000100
+
 func markDeleted(h syscall.Handle) error {
-	buf := [1]byte{1}
+	flags := uint32(fileDispositionDelete | fileDispositionIgnoreReadOnly)
+	var iosb ioStatusBlock
+	status, _, _ := ntSetInformationFile.Call(
+		uintptr(h),
+		uintptr(unsafe.Pointer(&iosb)),
+		uintptr(unsafe.Pointer(&flags)),
+		unsafe.Sizeof(flags),
+		fileDispositionInformationEx,
+	)
+	runtime.KeepAlive(flags)
+	runtime.KeepAlive(&iosb)
+	if status == 0 {
+		return nil
+	}
+	if status != statusInvalidInfoClass && status != statusNotSupported && status != statusInvalidParameter {
+		return ntErrno(status)
+	}
+	if err := clearReadOnly(h); err != nil {
+		return err
+	}
+	var bit byte = 1
+	status, _, _ = ntSetInformationFile.Call(
+		uintptr(h),
+		uintptr(unsafe.Pointer(&iosb)),
+		uintptr(unsafe.Pointer(&bit)),
+		1,
+		fileDispositionInformation,
+	)
+	runtime.KeepAlive(bit)
+	runtime.KeepAlive(&iosb)
+	if status != 0 {
+		return ntErrno(status)
+	}
+	return nil
+}
+
+func clearReadOnly(h syscall.Handle) error {
+	info, err := handleInfo(h)
+	if err != nil {
+		return err
+	}
+	if info.FileAttributes&syscall.FILE_ATTRIBUTE_READONLY == 0 {
+		return nil
+	}
+	attrs := info.FileAttributes &^ syscall.FILE_ATTRIBUTE_READONLY
+	if attrs == 0 {
+		attrs = syscall.FILE_ATTRIBUTE_NORMAL
+	}
+	buf := make([]byte, 36)
+	for i := 0; i < 4; i++ {
+		*(*int64)(unsafe.Pointer(&buf[i*8])) = -1
+	}
+	*(*uint32)(unsafe.Pointer(&buf[32])) = attrs
 	var iosb ioStatusBlock
 	status, _, _ := ntSetInformationFile.Call(
 		uintptr(h),
 		uintptr(unsafe.Pointer(&iosb)),
 		uintptr(unsafe.Pointer(&buf[0])),
-		1,
-		13,
+		uintptr(len(buf)),
+		fileBasicInformation,
 	)
 	runtime.KeepAlive(buf)
 	runtime.KeepAlive(&iosb)

@@ -5,6 +5,7 @@ package trash
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -67,6 +68,36 @@ func TestDeleteFollowsALinkAboveTheRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(src); !os.IsNotExist(err) {
+		t.Fatalf("the Candidate is still there: %v", err)
+	}
+}
+
+func TestDeleteRemovesAReadOnlyFile(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	candidate := filepath.Join(root, "node_modules")
+	if err := os.MkdirAll(candidate, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	note := filepath.Join(candidate, "note.txt")
+	if err := os.WriteFile(note, []byte("note\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(candidate, "other.txt"), []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := syscall.UTF16PtrFromString(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.SetFileAttributes(p, syscall.FILE_ATTRIBUTE_READONLY); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (Mover{}).Delete(root, candidate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(candidate); !os.IsNotExist(err) {
 		t.Fatalf("the Candidate is still there: %v", err)
 	}
 }
