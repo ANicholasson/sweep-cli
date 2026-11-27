@@ -55,6 +55,47 @@ func New(result scan.Result) Screen {
 	return Screen{lines: lines, choose: choose, docker: result.DockerData, unread: result.Unreadable}
 }
 
+// Decoder turns terminal bytes into keys. An escape sequence that arrives
+// in pieces is kept until a later Push completes it.
+type Decoder struct {
+	pending []byte
+}
+
+func (d *Decoder) Push(chunk []byte) [][]byte {
+	if len(chunk) == 0 {
+		return nil
+	}
+	d.pending = append(d.pending, chunk...)
+	var keys [][]byte
+	for {
+		key, rest, ok := takeKey(d.pending)
+		if !ok {
+			return keys
+		}
+		d.pending = rest
+		keys = append(keys, key)
+	}
+}
+
+func takeKey(b []byte) (key, rest []byte, ok bool) {
+	if len(b) == 0 {
+		return nil, nil, false
+	}
+	if b[0] != 0x1b {
+		return []byte{b[0]}, b[1:], true
+	}
+	if len(b) == 1 {
+		return nil, b, false
+	}
+	if b[1] == '[' || b[1] == 'O' {
+		if len(b) < 3 {
+			return nil, b, false
+		}
+		return append([]byte(nil), b[:3]...), b[3:], true
+	}
+	return []byte{b[0]}, b[1:], true
+}
+
 func (s *Screen) Press(key []byte) bool {
 	switch string(key) {
 	case "q", "\x03":
@@ -94,22 +135,14 @@ func (s Screen) Text() string {
 	return out.String()
 }
 
+const notRead = "Not read, so the list may be short and a Size may be low"
+
 func (s Screen) Page(width, height int) string {
 	if width < 1 || height < 1 {
 		return s.Text()
 	}
 	lines := strings.Split(strings.TrimRight(s.Text(), "\n"), "\n")
-	footerAt := len(lines)
-	for i, line := range lines {
-		if strings.Contains(line, "Docker data") {
-			footerAt = i
-			if i > 0 && lines[i-1] == "" {
-				footerAt = i - 1
-			}
-			break
-		}
-	}
-	body, footer := lines[:footerAt], clipLines(lines[footerAt:], width)
+	body, footer, diag := splitDrawing(lines)
 	hi := -1
 	for i, line := range body {
 		if strings.HasPrefix(line, "> ") {
@@ -117,11 +150,88 @@ func (s Screen) Page(width, height int) string {
 			break
 		}
 	}
-	if len(footer) >= height {
-		return strings.Join(footer[len(footer)-height:], "\n") + "\n"
+	reserve := 0
+	if len(body) > 0 && height > 0 {
+		reserve = 1
 	}
-	window := clipLines(windowAround(body, hi, height-len(footer)), width)
-	return strings.Join(append(window, footer...), "\n") + "\n"
+	footer = fitFooter(footer, height-reserve)
+	diag = boundDiag(diag, height-reserve-len(footer))
+	budget := height - len(footer) - len(diag)
+	window := clipLines(windowAround(body, hi, budget), width)
+	parts := append(append(window, clipLines(footer, width)...), clipLines(diag, width)...)
+	return strings.Join(parts, "\n") + "\n"
+}
+
+func splitDrawing(lines []string) (body, footer, diag []string) {
+	footerAt := len(lines)
+	for i, line := range lines {
+		if strings.Contains(line, "Docker data") && !strings.Contains(line, "[") {
+			footerAt = i
+			if i > 0 && lines[i-1] == "" {
+				footerAt = i - 1
+			}
+			break
+		}
+	}
+	diagAt := len(lines)
+	for i := footerAt; i < len(lines); i++ {
+		if lines[i] == notRead {
+			diagAt = i
+			if i > footerAt && lines[i-1] == "" {
+				diagAt = i - 1
+			}
+			break
+		}
+	}
+	return lines[:footerAt], lines[footerAt:diagAt], lines[diagAt:]
+}
+
+func fitFooter(footer []string, limit int) []string {
+	if limit <= 0 || len(footer) == 0 {
+		return nil
+	}
+	if len(footer) <= limit {
+		return footer
+	}
+	total := -1
+	for i, line := range footer {
+		if strings.HasSuffix(line, " picked") {
+			total = i
+		}
+	}
+	start := len(footer) - limit
+	if total >= 0 && total < start {
+		out := []string{footer[total]}
+		return append(out, footer[len(footer)-(limit-1):]...)
+	}
+	return footer[start:]
+}
+
+func boundDiag(diag []string, room int) []string {
+	if room <= 0 || len(diag) == 0 {
+		return nil
+	}
+	if len(diag) <= room {
+		return diag
+	}
+	if room == 1 {
+		return []string{fmt.Sprintf("%d paths were not read", unreadCount(diag))}
+	}
+	kept := append([]string{}, diag[:room-1]...)
+	return append(kept, fmt.Sprintf("  and %d more", len(diag)-(room-1)))
+}
+
+func unreadCount(diag []string) int {
+	n := 0
+	for _, line := range diag {
+		if strings.HasPrefix(line, "  ") {
+			n++
+		}
+	}
+	if n == 0 {
+		return len(diag)
+	}
+	return n
 }
 
 func windowAround(lines []string, hi, budget int) []string {
@@ -298,7 +408,7 @@ func writeUnread(out *strings.Builder, unread []scan.Unreadable) {
 	if len(unread) == 0 {
 		return
 	}
-	out.WriteString("\nNot read, so the list may be short and a Size may be low\n")
+	out.WriteString("\n" + notRead + "\n")
 	for _, u := range unread {
 		fmt.Fprintf(out, "  %s: %v\n", u.Path, u.Err)
 	}

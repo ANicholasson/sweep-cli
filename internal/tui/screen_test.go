@@ -3,6 +3,7 @@ package tui_test
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -150,7 +151,7 @@ func TestAShortTerminalKeepsTheHighlightAndTheTotal(t *testing.T) {
 	if n := len(strings.Split(strings.TrimRight(page, "\n"), "\n")); n > 12 {
 		t.Fatalf("%d lines, want at most 12\n%s", n, page)
 	}
-	if !strings.Contains(page, "> [x]") || !strings.Contains(page, "out/00") {
+	if !strings.Contains(page, "> [x]") || !strings.Contains(page, filepath.FromSlash("out/00")) {
 		t.Fatalf("the highlighted Candidate is off screen:\n%s", page)
 	}
 	if !strings.Contains(page, "1 Candidate, 1.0 KiB picked\n") || !strings.Contains(page, "q quit\n") || !strings.Contains(page, "Docker data") {
@@ -161,7 +162,7 @@ func TestAShortTerminalKeepsTheHighlightAndTheTotal(t *testing.T) {
 		screen.Press([]byte("j"))
 	}
 	page = screen.Page(80, 12)
-	if !strings.Contains(page, "> [ ]") || !strings.Contains(page, "out/39") {
+	if !strings.Contains(page, "> [ ]") || !strings.Contains(page, filepath.FromSlash("out/39")) {
 		t.Fatalf("the last Candidate is off screen:\n%s", page)
 	}
 	screen.Press([]byte("t"))
@@ -199,6 +200,86 @@ func TestANarrowTerminalKeepsTheTick(t *testing.T) {
 	if !strings.Contains(page, "> [x]") || !strings.Contains(page, "picked\n") {
 		t.Fatalf("the tick or the total was clipped away:\n%s", page)
 	}
+}
+
+func TestUnreadPathsLeaveRoomForTheHighlightAndTheTotal(t *testing.T) {
+	unread := make([]scan.Unreadable, 20)
+	for i := range unread {
+		unread[i] = scan.Unreadable{Path: fmt.Sprintf("/locked/%02d", i), Err: errors.New("permission denied")}
+	}
+	screen := tui.New(scan.Result{
+		Candidates: []domain.Candidate{candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)},
+		DockerData: domain.Reported(0),
+		Unreadable: unread,
+	})
+	for _, height := range []int{12, 24} {
+		page := screen.Page(80, height)
+		if n := len(strings.Split(strings.TrimRight(page, "\n"), "\n")); n > height {
+			t.Errorf("height %d drew %d lines\n%s", height, n, page)
+		}
+		if !strings.Contains(page, "> [x]") || !strings.Contains(page, "node_modules") {
+			t.Errorf("height %d lost the highlighted Candidate:\n%s", height, page)
+		}
+		if !strings.Contains(page, "1 Candidate, 1.0 KiB picked\n") {
+			t.Errorf("height %d lost the total:\n%s", height, page)
+		}
+	}
+	if screen.Page(200, 80) != screen.Text() {
+		t.Fatalf("a tall terminal dropped part of the drawing:\n%s", screen.Page(200, 80))
+	}
+}
+
+func TestABurstOfKeysIsAppliedOneAtATime(t *testing.T) {
+	screen := tui.New(scan.Result{
+		Candidates: []domain.Candidate{
+			candidate("/work/app", "/work/app/one", domain.Dependencies, "First.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), false, false),
+			candidate("/work/app", "/work/app/two", domain.Dependencies, "Second.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), false, false),
+			candidate("/work/app", "/work/app/three", domain.Cache, "Third.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), false, false),
+		},
+		DockerData: domain.Reported(0),
+	})
+	var keys tui.Decoder
+	if apply(&keys, &screen, []byte("jj")) {
+		t.Fatal("jj quit")
+	}
+	if !strings.Contains(lineContaining(t, screen.Text(), "three"), "> [ ]") {
+		t.Fatalf("jj did not move twice:\n%s", screen.Text())
+	}
+
+	one := tui.New(scan.Result{
+		Candidates: []domain.Candidate{candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), false, false)},
+		DockerData: domain.Reported(0),
+	})
+	keys = tui.Decoder{}
+	if !apply(&keys, &one, []byte("tq")) {
+		t.Fatal("q in tq was dropped")
+	}
+	if !strings.Contains(one.Text(), "> [x]") {
+		t.Fatalf("t in tq was dropped:\n%s", one.Text())
+	}
+}
+
+func TestAnUnfinishedEscapeIsKeptForTheNextRead(t *testing.T) {
+	var keys tui.Decoder
+	if got := keys.Push([]byte{0x1b}); len(got) != 0 {
+		t.Fatalf("unfinished escape produced %q", got)
+	}
+	if got := keys.Push([]byte{'['}); len(got) != 0 {
+		t.Fatalf("unfinished escape produced %q", got)
+	}
+	got := keys.Push([]byte{'A', 'j'})
+	if len(got) != 2 || string(got[0]) != "\x1b[A" || string(got[1]) != "j" {
+		t.Fatalf("keys = %q, want up then j", got)
+	}
+}
+
+func apply(keys *tui.Decoder, screen *tui.Screen, chunk []byte) bool {
+	for _, key := range keys.Push(chunk) {
+		if screen.Press(key) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAnUnknownKeyChangesNothing(t *testing.T) {

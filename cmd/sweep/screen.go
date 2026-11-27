@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"golang.org/x/term"
 
@@ -62,15 +61,26 @@ func show(in, out *os.File, screen tui.Screen) error {
 	if err := draw(out, frame(out, screen)); err != nil {
 		return err
 	}
+	var keys tui.Decoder
+	buf := make([]byte, 64)
 	for {
-		key, err := readKey(in)
-		if err != nil {
-			return err
+		n, err := in.Read(buf)
+		quit := false
+		for _, key := range keys.Push(buf[:n]) {
+			if screen.Press(key) {
+				quit = true
+				break
+			}
 		}
-		if screen.Press(key) {
+		if quit {
 			return nil
 		}
-		if err := draw(out, frame(out, screen)); err != nil {
+		if n > 0 {
+			if drawErr := draw(out, frame(out, screen)); drawErr != nil {
+				return drawErr
+			}
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -88,41 +98,4 @@ func frame(out *os.File, screen tui.Screen) string {
 func draw(out *os.File, text string) error {
 	_, err := io.WriteString(out, "\033[H\033[J"+strings.ReplaceAll(text, "\n", "\r\n"))
 	return err
-}
-
-// An arrow is the escape sequence when it arrives together, and the bytes
-// that follow a lone escape when the terminal sends them just after.
-func readKey(in *os.File) ([]byte, error) {
-	buf := make([]byte, 8)
-	n, err := in.Read(buf)
-	if err != nil {
-		return nil, err
-	}
-	if n == 1 && buf[0] == 0x1b {
-		more, err := readEscape(in)
-		if err != nil {
-			return nil, err
-		}
-		if len(more) == 0 {
-			return buf[:1], nil
-		}
-		return append([]byte{0x1b}, more...), nil
-	}
-	return buf[:n], nil
-}
-
-func readEscape(in *os.File) ([]byte, error) {
-	if err := in.SetReadDeadline(time.Now().Add(25 * time.Millisecond)); err != nil {
-		return nil, nil
-	}
-	defer func() { _ = in.SetReadDeadline(time.Time{}) }()
-	buf := make([]byte, 7)
-	n, err := in.Read(buf)
-	if n > 0 {
-		return buf[:n], nil
-	}
-	if err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
-		return nil, nil
-	}
-	return nil, err
 }
