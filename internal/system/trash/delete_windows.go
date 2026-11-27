@@ -164,7 +164,7 @@ func clearReadOnly(h syscall.Handle) error {
 	if attrs == 0 {
 		attrs = syscall.FILE_ATTRIBUTE_NORMAL
 	}
-	buf := make([]byte, 36)
+	buf := make([]byte, 40)
 	for i := 0; i < 4; i++ {
 		*(*int64)(unsafe.Pointer(&buf[i*8])) = -1
 	}
