@@ -20,3 +20,5 @@ func (Mover) Move(string, string) error { return ErrUnavailable }
 
 // Restore refuses. There is no trash to restore from.
 func (Mover) Restore(string, string) error { return ErrUnavailable }
+
+func (Mover) Delete(string, string) error { return ErrUnavailable }

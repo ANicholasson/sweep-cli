@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ANicholasson/sweep-cli/internal/system/trash"
 )
 
 func TestCleanDeletesThePlanAndLeavesTheTrashEmpty(t *testing.T) {
@@ -163,6 +165,60 @@ func TestCleanSkipsACandidateThatChangedAndDeletesTheRest(t *testing.T) {
 			t.Errorf("the Trap %s did not survive: %v", trap.Path, err)
 		}
 	}
+}
+
+func TestCleanDeleteSkipsWhenADirectoryAboveBecomesALink(t *testing.T) {
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	b.data = filepath.Join(dir, "trash-home")
+	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
+	root := at(key.Root)
+	planPath := filepath.Join(t.TempDir(), "plan.json")
+	dry := b.run(t, dir, "clean", "--dry-run", "--plan", planPath, root)
+	if dry.status != 0 || dry.stderr != "" {
+		t.Fatalf("dry run exit %d, stderr %q", dry.status, dry.stderr)
+	}
+	app := at("projects/stale-app")
+	held := app + ".held"
+	if err := trash.Place(app, held); err != nil {
+		t.Fatal(err)
+	}
+	linkTo(t, at("outside/stash-app"), app)
+	precious := at("outside/stash-app/node_modules/fake-theta/index.js")
+	heldNote := filepath.Join(held, "node_modules", "fake-old", "note.txt")
+	beforePrecious, err := os.ReadFile(precious)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeHeld, err := os.ReadFile(heldNote)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := b.run(t, dir, "clean", "--delete", "--plan", planPath)
+
+	afterPrecious, err := os.ReadFile(precious)
+	if err != nil || string(afterPrecious) != string(beforePrecious) {
+		t.Errorf("the directory the Link leads to changed: %q, %v", afterPrecious, err)
+	}
+	afterHeld, err := os.ReadFile(heldNote)
+	if err != nil || string(afterHeld) != string(beforeHeld) {
+		t.Errorf("the Candidate that was renamed aside changed: %q, %v", afterHeld, err)
+	}
+	if got.status != 1 {
+		t.Fatalf("exit %d, want 1, stderr %q\n%s", got.status, got.stderr, got.stdout)
+	}
+	if !strings.HasPrefix(got.stdout, "The removal is permanent.\n") {
+		t.Errorf("stdout is\n%s\nwant the permanent line first", got.stdout)
+	}
+	candidate := filepath.Join(app, "node_modules")
+	if !strings.Contains(got.stdout, "Root rule") || !strings.Contains(got.stdout, candidate) {
+		t.Errorf("stdout is\n%s\nwant a Skip of %s under the Root rule", got.stdout, candidate)
+	}
+	if strings.Contains(got.stdout, "Reclaimed: 1") {
+		t.Errorf("a Candidate was deleted:\n%s", got.stdout)
+	}
+	assertTrashEmpty(t, b.data)
 }
 
 func TestDeleteOnADryRunRemovesNothing(t *testing.T) {

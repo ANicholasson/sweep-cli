@@ -49,7 +49,7 @@ func (t *Trash) Move(_, p string) error {
 	return nil
 }
 
-func (t *Trash) Delete(p string) error {
+func (t *Trash) Delete(_, p string) error {
 	_, err := t.take("delete", p)
 	return err
 }

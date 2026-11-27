@@ -24,7 +24,7 @@ import (
 type Trash interface {
 	Move(root, path string) error
 	Restore(root, path string) error
-	Delete(path string) error
+	Delete(root, path string) error
 }
 
 type Removal uint8
@@ -136,7 +136,7 @@ func Run(files scan.Files, git safety.Git, bin Trash, p plan.Plan, removal Remov
 			continue
 		}
 		if removal == ToDelete {
-			err = bin.Delete(c.Path)
+			err = bin.Delete(string(root), c.Path)
 		} else {
 			err = bin.Move(string(root), c.Path)
 		}
