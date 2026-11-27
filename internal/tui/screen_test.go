@@ -278,6 +278,25 @@ func TestUnreadPathsDoNotHideProjectHeadings(t *testing.T) {
 	}
 }
 
+func TestAProjectNamedDockerDataKeepsItsHeading(t *testing.T) {
+	when := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	var candidates []domain.Candidate
+	for _, name := range []string{"Docker data/c", "Docker data/d", "Docker data/e", "a", "b", "f"} {
+		project := "/work/" + name
+		candidates = append(candidates, candidate(project, project+"/node_modules", domain.Dependencies, "It comes back.", 12288, when, true, false))
+	}
+	screen := tui.New(scan.Result{Candidates: candidates, DockerData: domain.Reported(0)})
+	page := screen.Page(100, 12)
+	if !strings.Contains(page, "/work/Docker data/c\n") || !strings.Contains(page, "> [x]") {
+		t.Fatalf("the Project heading was treated as Docker data:\n%s", page)
+	}
+	screen.Press([]byte("j"))
+	page = screen.Page(100, 12)
+	if !strings.Contains(page, "/work/Docker data/d\n") {
+		t.Fatalf("the next Project heading was dropped:\n%s", page)
+	}
+}
+
 func TestDockerStaysHighlightedOnAShortPane(t *testing.T) {
 	screen := tui.New(scan.Result{
 		Candidates: []domain.Candidate{candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)},

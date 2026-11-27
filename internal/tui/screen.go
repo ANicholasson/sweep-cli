@@ -28,6 +28,7 @@ const (
 	heading kind = iota
 	candidate
 	docker
+	gap
 )
 
 type line struct {
@@ -112,27 +113,14 @@ func (s *Screen) Press(key []byte) bool {
 	return false
 }
 
+type drawn struct {
+	text string
+	kind kind
+	keep bool
+}
+
 func (s Screen) Text() string {
-	var out strings.Builder
-	for i, g := range s.sections() {
-		if i > 0 {
-			out.WriteString("\n")
-		}
-		fmt.Fprintf(&out, "%s\n", g.heading)
-		columns := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
-		for _, row := range g.rows {
-			_, _ = fmt.Fprintf(columns, "%s[%s]\t%s\t%s\t%s\t%s\n",
-				s.mark(row.index), box(row.picked), human(row.candidate.Size), row.candidate.Rule.Kind, when(row.candidate.LastUsed), shownPath(row.candidate))
-		}
-		_ = columns.Flush()
-	}
-	out.WriteString("\n")
-	_, _ = fmt.Fprintf(&out, "%s%s\n", s.mark(s.dockerIndex()), dockerText(s.docker))
-	_, _ = fmt.Fprintf(&out, "\nReason\n%s\n", s.reason())
-	n, size := s.picked()
-	_, _ = fmt.Fprintf(&out, "\n%s, %s picked\n%s\n", counted(n), human(size), keys)
-	writeUnread(&out, s.unread)
-	return out.String()
+	return joinDrawn(append(append(s.bodyLines(), s.chromeLines()...), s.diagLines()...))
 }
 
 const notRead = "Not read, so the list may be short and a Size may be low"
@@ -141,11 +129,12 @@ func (s Screen) Page(width, height int) string {
 	if width < 1 || height < 1 {
 		return s.Text()
 	}
-	lines := strings.Split(strings.TrimRight(s.Text(), "\n"), "\n")
-	body, footer, diag := splitDrawing(lines)
+	body := s.bodyLines()
+	footer := s.chromeLines()
+	diag := s.diagLines()
 	hi := -1
 	for i, line := range body {
-		if strings.HasPrefix(line, "> ") {
+		if line.keep {
 			hi = i
 			break
 		}
@@ -168,48 +157,78 @@ func (s Screen) Page(width, height int) string {
 	if bodyBudget > remaining {
 		bodyBudget = remaining
 	}
-	diag = boundDiag(diag, remaining-bodyBudget)
-	window := clipLines(windowAround(body, hi, bodyBudget), width)
-	parts := append(append(window, clipLines(footer, width)...), clipLines(diag, width)...)
+	diag = fitDiag(diag, remaining-bodyBudget)
+	window := clipLines(texts(windowAround(body, hi, bodyBudget)), width)
+	parts := append(append(window, clipLines(texts(footer), width)...), clipLines(texts(diag), width)...)
 	return strings.Join(parts, "\n") + "\n"
 }
 
-func spanWithHeading(body []string, hi int) int {
-	n := 1
-	if hi > 0 {
-		prev := body[hi-1]
-		if prev != "" && !strings.HasPrefix(prev, "> ") && !strings.HasPrefix(prev, "  [") {
-			n++
+func (s Screen) bodyLines() []drawn {
+	var lines []drawn
+	for i, g := range s.sections() {
+		if i > 0 {
+			lines = append(lines, drawn{kind: gap})
 		}
+		lines = append(lines, drawn{text: g.heading, kind: heading})
+		var buf strings.Builder
+		columns := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+		var indexes []int
+		for _, row := range g.rows {
+			indexes = append(indexes, row.index)
+			_, _ = fmt.Fprintf(columns, "%s[%s]\t%s\t%s\t%s\t%s\n",
+				s.mark(row.index), box(row.picked), human(row.candidate.Size), row.candidate.Rule.Kind, when(row.candidate.LastUsed), shownPath(row.candidate))
+		}
+		_ = columns.Flush()
+		rendered := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+		if buf.Len() == 0 {
+			rendered = nil
+		}
+		for j, text := range rendered {
+			line := drawn{text: text, kind: candidate}
+			if j < len(indexes) && s.choose[s.at] == indexes[j] {
+				line.keep = true
+			}
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func (s Screen) chromeLines() []drawn {
+	n, size := s.picked()
+	onDocker := s.lines[s.choose[s.at]].kind == docker
+	return []drawn{
+		{kind: gap},
+		{text: s.mark(s.dockerIndex()) + dockerText(s.docker), kind: docker, keep: onDocker},
+		{kind: gap},
+		{text: "Reason"},
+		{text: s.reason()},
+		{kind: gap},
+		{text: fmt.Sprintf("%s, %s picked", counted(n), human(size)), keep: true},
+		{text: keys},
+	}
+}
+
+func (s Screen) diagLines() []drawn {
+	if len(s.unread) == 0 {
+		return nil
+	}
+	lines := []drawn{{kind: gap}, {text: notRead}}
+	for _, u := range s.unread {
+		lines = append(lines, drawn{text: fmt.Sprintf("  %s: %v", u.Path, u.Err)})
+	}
+	return lines
+}
+
+func spanWithHeading(body []drawn, hi int) int {
+	n := 1
+	if hi > 0 && body[hi-1].kind == heading {
+		n++
 	}
 	return n
 }
 
-func splitDrawing(lines []string) (body, footer, diag []string) {
-	footerAt := len(lines)
-	for i, line := range lines {
-		if strings.Contains(line, "Docker data") && !strings.Contains(line, "[") {
-			footerAt = i
-			if i > 0 && lines[i-1] == "" {
-				footerAt = i - 1
-			}
-			break
-		}
-	}
-	diagAt := len(lines)
-	for i := footerAt; i < len(lines); i++ {
-		if lines[i] == notRead {
-			diagAt = i
-			if i > footerAt && lines[i-1] == "" {
-				diagAt = i - 1
-			}
-			break
-		}
-	}
-	return lines[:footerAt], lines[footerAt:diagAt], lines[diagAt:]
-}
-
-func fitFooter(footer []string, limit int) []string {
+func fitFooter(footer []drawn, limit int) []drawn {
 	if limit <= 0 || len(footer) == 0 {
 		return nil
 	}
@@ -218,7 +237,7 @@ func fitFooter(footer []string, limit int) []string {
 	}
 	var must []int
 	for i, line := range footer {
-		if strings.HasPrefix(line, "> ") || strings.HasSuffix(line, " picked") {
+		if line.keep {
 			must = append(must, i)
 		}
 	}
@@ -232,7 +251,7 @@ func fitFooter(footer []string, limit int) []string {
 	for i := len(footer) - 1; i >= 0 && len(keep) < limit; i-- {
 		keep[i] = true
 	}
-	var out []string
+	var out []drawn
 	for i, line := range footer {
 		if keep[i] {
 			out = append(out, line)
@@ -241,40 +260,40 @@ func fitFooter(footer []string, limit int) []string {
 	return out
 }
 
-func boundDiag(diag []string, room int) []string {
+func fitDiag(diag []drawn, room int) []drawn {
 	if room <= 0 || len(diag) == 0 {
 		return nil
 	}
 	if len(diag) <= room {
 		return diag
 	}
-	paths := unreadPaths(diag)
-	if room == 1 {
-		return []string{fmt.Sprintf("%d paths were not read", len(paths))}
-	}
-	out := []string{notRead}
-	slots := room - 1
-	if len(paths) <= slots {
-		return append(out, paths...)
-	}
-	if slots == 1 {
-		return append(out, fmt.Sprintf("  and %d more", len(paths)))
-	}
-	out = append(out, paths[:slots-1]...)
-	return append(out, fmt.Sprintf("  and %d more", len(paths)-(slots-1)))
-}
-
-func unreadPaths(diag []string) []string {
 	var paths []string
 	for _, line := range diag {
-		if strings.HasPrefix(line, "  ") {
-			paths = append(paths, line)
+		if strings.HasPrefix(line.text, "  ") {
+			paths = append(paths, line.text)
 		}
 	}
-	return paths
+	if room == 1 {
+		return []drawn{{text: fmt.Sprintf("%d paths were not read", len(paths))}}
+	}
+	out := []drawn{{text: notRead}}
+	slots := room - 1
+	if len(paths) <= slots {
+		for _, path := range paths {
+			out = append(out, drawn{text: path})
+		}
+		return out
+	}
+	if slots == 1 {
+		return append(out, drawn{text: fmt.Sprintf("  and %d more", len(paths))})
+	}
+	for _, path := range paths[:slots-1] {
+		out = append(out, drawn{text: path})
+	}
+	return append(out, drawn{text: fmt.Sprintf("  and %d more", len(paths)-(slots-1))})
 }
 
-func windowAround(lines []string, hi, budget int) []string {
+func windowAround(lines []drawn, hi, budget int) []drawn {
 	if len(lines) == 0 || budget <= 0 {
 		return nil
 	}
@@ -294,6 +313,18 @@ func windowAround(lines []string, hi, budget int) []string {
 		start = end - budget
 	}
 	return lines[start:end]
+}
+
+func texts(lines []drawn) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = line.text
+	}
+	return out
+}
+
+func joinDrawn(lines []drawn) string {
+	return strings.Join(texts(lines), "\n") + "\n"
 }
 
 func clipLines(lines []string, width int) []string {
@@ -442,16 +473,6 @@ func dockerText(data domain.DockerData) string {
 		return fmt.Sprintf("Docker data  %s  %s", human(size), data.Mark())
 	}
 	return fmt.Sprintf("Docker data  %s", data.Mark())
-}
-
-func writeUnread(out *strings.Builder, unread []scan.Unreadable) {
-	if len(unread) == 0 {
-		return
-	}
-	out.WriteString("\n" + notRead + "\n")
-	for _, u := range unread {
-		fmt.Fprintf(out, "  %s: %v\n", u.Path, u.Err)
-	}
 }
 
 func counted(n int) string {
