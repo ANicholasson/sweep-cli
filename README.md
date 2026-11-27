@@ -8,6 +8,25 @@ Status: early development.
 
 ## Usage
 
+    sweep
+
+With no arguments, and when standard input and standard output are a
+terminal, sweep opens a list of the Candidates a Scan would find. They
+are grouped by Project. Each row shows a tick, the Size, the Kind, Last
+used and the path. Stale Candidates beneath the Roots the user gave start
+ticked. Shared caches are in their own section and start unticked. Docker
+data is shown on its own line and cannot be ticked. The Reason for the
+highlighted Candidate is shown. A total of how many Candidates and how
+much Size are picked updates with every tick. `j` and `k` move, `t`
+ticks, `u` unticks and `q` quits. Quitting changes nothing: no Plan is
+written and nothing is removed. When there is no interactive terminal,
+sweep says so and points at `sweep scan`.
+
+The exit status is 0 when the user quits, 1 when the terminal cannot be
+read or the drawing cannot be written, and 2 when there is no interactive
+terminal, the configuration file is rejected, or a Root is not a
+directory, in which case the screen does not open.
+
     sweep scan [--json] [--no-shared-caches] [Root...]
 
 A Scan looks beneath each Root. Roots come from the command line first,
@@ -185,7 +204,8 @@ It stops at the first step that fails and exits non-zero:
    [the package layout](docs/adr/0001-hexagonal-packages-with-feature-folders.md):
    `internal/domain` does no IO, `internal/system/trash` is the only
    package that trashes or deletes anything, and `cmd/sweep` is the only
-   package that imports an adapter from `internal/system`. It reads every
+   package that imports an adapter from `internal/system`, so the report
+   and the interactive screen never import one. It reads every
    Go file, so a file for another operating system is checked on yours.
 2. `gofmt -l .` lists no file, so every Go file is formatted.
 3. `go build ./...`

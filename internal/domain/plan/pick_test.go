@@ -80,6 +80,24 @@ func TestASharedCacheIsPickedOnlyWhenNamed(t *testing.T) {
 	})
 }
 
+func TestTheDefaultPickIsStaleCandidatesBeneathTheUsersRoots(t *testing.T) {
+	stale := aged("/app/node_modules", "Node", domain.Rule{Kind: domain.Dependencies, Where: domain.InProject{Manifest: "package.json", Candidate: "node_modules"}})
+	recent := stale
+	recent.Path = "/app/dist"
+	recent.Stale = false
+	cache := aged("/home/.npm/_cacache", "Node", domain.Rule{Kind: domain.Cache, Where: domain.InSharedCache{Linux: ".npm/_cacache"}})
+
+	if !plan.StartsPicked(stale) {
+		t.Error("StartsPicked(stale) = false, want true")
+	}
+	if plan.StartsPicked(recent) {
+		t.Error("StartsPicked(recent) = true, want false")
+	}
+	if plan.StartsPicked(cache) {
+		t.Error("StartsPicked(shared cache) = true, want false")
+	}
+}
+
 func aged(path, ecosystem string, rule domain.Rule) domain.Candidate {
 	return domain.Candidate{
 		Path:      path,

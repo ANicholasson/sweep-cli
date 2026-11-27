@@ -5,7 +5,7 @@ description: Verify sweep, the Go command-line tool in this repo, by building th
 
 # Verify sweep
 
-sweep is a short-lived CLI. There is no server to keep alive and no terminal UI: it reads no environment variable and never checks for a terminal, so driving it means running the built binary with captured streams. A verification run is: **launch** (build both binaries and one Fixture into a private run directory), **doctor**, **drive** recipes from [`features/`](features/README.md), **cleanup** (evidence survives).
+sweep is a short-lived CLI. There is no server to keep alive. With no arguments it opens an interactive screen when standard input and standard output are a terminal, and otherwise says so and points at `sweep scan`. Every other command reads no terminal. Driving a command means running the built binary with captured streams. The helper's `run` captures pipes, so plain `sweep` takes the no-terminal path. The screen itself is driven in a terminal, with tmux. A verification run is: **launch** (build both binaries and one Fixture into a private run directory), **doctor**, **drive** recipes from [`features/`](features/README.md), **cleanup** (evidence survives).
 
 Read `GLOSSARY.md` first and use its words (Root, Candidate, Size, Kind, Reason, Fixture, Trap, Answer key) in every report.
 

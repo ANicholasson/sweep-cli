@@ -148,7 +148,7 @@ func (b onlyIn) broken(_ string, src source) []violation {
 }
 
 func (b importedOnlyBy) rule() (string, string) {
-	return b.name, fmt.Sprintf("Outside %s no Go file imports a package beneath %s, because %s. So the report never imports an adapter, and no package but %s imports both the domain and an adapter. A test of an adapter is written in the adapter's own package, so it imports none.",
+	return b.name, fmt.Sprintf("Outside %s no Go file imports a package beneath %s, because %s. So the report and the interactive screen never import an adapter, and no package but %s imports both the domain and an adapter. A test of an adapter is written in the adapter's own package, so it imports none.",
 		b.by, b.dir, b.why, b.by)
 }
 

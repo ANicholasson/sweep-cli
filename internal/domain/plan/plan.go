@@ -64,6 +64,10 @@ type Choice struct {
 	Reason    string
 }
 
+func StartsPicked(c domain.Candidate) bool {
+	return c.Stale && !c.Rule.SharedCache()
+}
+
 // Pick is the choice one dry run asked for. Named are paths from --pick.
 // Kinds and Ecosystems narrow the choice; an empty list does not. AnyAge
 // chooses every Candidate those lists allow. StaleNamed means this Scan's
@@ -166,7 +170,7 @@ func decide(c domain.Candidate, named bool, pick Pick, staleAfter time.Duration)
 		}
 		return false, fmt.Sprintf("newer than --stale-days %d", days)
 	}
-	if c.Stale {
+	if StartsPicked(c) {
 		return true, "Stale"
 	}
 	return false, "used recently"

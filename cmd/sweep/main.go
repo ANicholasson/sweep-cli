@@ -35,14 +35,15 @@ const (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sweep", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
-		_, _ = fmt.Fprintln(stderr, "usage: sweep scan [--json] [--no-shared-caches] [Root...]")
+		_, _ = fmt.Fprintln(stderr, "usage: sweep")
+		_, _ = fmt.Fprintln(stderr, "       sweep scan [--json] [--no-shared-caches] [Root...]")
 		_, _ = fmt.Fprintln(stderr, "       "+cleanDryUsage)
 		_, _ = fmt.Fprintln(stderr, "       "+cleanActUsage)
 		_, _ = fmt.Fprintln(stderr, "       sweep --version")
@@ -60,6 +61,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return done
 	}
 	switch flags.Arg(0) {
+	case "":
+		return screenCommand(stdin, stdout, stderr)
 	case "scan":
 		return scanCommand(flags.Args()[1:], stdout, stderr)
 	case "clean":
