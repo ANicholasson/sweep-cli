@@ -50,6 +50,45 @@ func TestCleanReportsMovedSkippedAndFailed(t *testing.T) {
 	}
 }
 
+func TestCleanReportsWhatWasDeletedAndReclaimed(t *testing.T) {
+	var out bytes.Buffer
+	err := report.Clean(&out, clean.Result{
+		How:     clean.ToDelete,
+		Deleted: []clean.Item{{Path: "/work/old", Size: 2048}},
+		Skipped: []clean.Skip{{
+			Item: clean.Item{Path: "/work/changed", Size: 512},
+			Rule: clean.Fingerprint,
+		}},
+		Failed: []clean.Failure{{
+			Item: clean.Item{Path: "/work/stuck", Size: 1024},
+			Err:  errors.New("the directory could not be removed"),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"Deleted\n",
+		"/work/old",
+		"Skipped\n",
+		"Fingerprint rule",
+		"/work/changed",
+		"Failed\n",
+		"/work/stuck",
+		"Reclaimed: 1 Candidate, 2.0 KiB\n",
+		"Skipped 1 Candidate, 512 B\n",
+		"Failed 1 Candidate, 1.0 KiB\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report is\n%s\nwant it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "Moved to trash") {
+		t.Errorf("deleted space is called moved to trash:\n%s", got)
+	}
+}
+
 func TestCleanSaysWhenNothingMoved(t *testing.T) {
 	var out bytes.Buffer
 	err := report.Clean(&out, clean.Result{

@@ -1,6 +1,6 @@
 // Package clean carries out a Plan. It reads the file tree only through
-// scan.Files, asks the Git rule only through safety.Git, and moves a
-// Candidate only through Trash.
+// scan.Files, asks the Git rule only through safety.Git, and moves or
+// deletes a Candidate only through Trash.
 package clean
 
 import (
@@ -14,8 +14,9 @@ import (
 )
 
 // Trash moves a path into the operating system's trash, where it can be
-// restored. Move never deletes. When Move returns an error, the path is
-// still where it was.
+// restored, or deletes it. Move never deletes. When Move returns an error,
+// the path is still where it was. When Delete returns an error, part of
+// the path may already be gone.
 //
 // root is the Root the path was reached from. A Link above that Root may
 // be followed, because that is how the caller spelled it. A Link beneath
@@ -23,7 +24,15 @@ import (
 type Trash interface {
 	Move(root, path string) error
 	Restore(root, path string) error
+	Delete(path string) error
 }
+
+type Removal uint8
+
+const (
+	ToTrash Removal = iota
+	ToDelete
+)
 
 // Rule is the Safety rule that made a Skip.
 type Rule uint8
@@ -63,16 +72,19 @@ type Skip struct {
 	Rule Rule
 }
 
-// Failure is a Candidate that could not be moved. It is still in place.
+// Failure is a Candidate that could not be trashed or deleted. A failed
+// Trash is still in place. A failed Delete may be partly gone.
 type Failure struct {
 	Item
 	Err error
 }
 
-// Result is what a Clean did. Trashed space was moved to the trash. It is
-// not reclaimed.
+// Result is what a Clean did. Trashed space was moved to the trash and is
+// not reclaimed. Deleted space is reclaimed.
 type Result struct {
+	How     Removal
 	Trashed []Item
+	Deleted []Item
 	Skipped []Skip
 	Failed  []Failure
 }
@@ -88,7 +100,7 @@ const (
 )
 
 // Run carries out p. Each Candidate is judged on its own, immediately
-// before it would be moved, and one Candidate does not stop the rest.
+// before it is trashed or deleted, and one Candidate does not stop the rest.
 //
 // The Root rule comes first. The Candidate is reached from a Root one
 // component at a time, and a Link on that walk is a Skip. Nothing under
@@ -101,11 +113,8 @@ const (
 //
 // The Fingerprint rule is last. A Candidate whose Fingerprint no longer
 // matches is a Skip.
-//
-// Only then does Move run. Move never deletes. When it fails, the
-// Candidate stays and the failure is reported.
-func Run(files scan.Files, git safety.Git, bin Trash, p plan.Plan) Result {
-	var out Result
+func Run(files scan.Files, git safety.Git, bin Trash, p plan.Plan, removal Removal) Result {
+	out := Result{How: removal}
 	for _, c := range p.Picked {
 		item := Item{Path: c.Path, Size: c.Fingerprint.Size}
 		root, how := reach(files, p.Roots, c.Path)
@@ -126,8 +135,17 @@ func Run(files scan.Files, git safety.Git, bin Trash, p plan.Plan) Result {
 			out.Skipped = append(out.Skipped, Skip{Item: item, Rule: Fingerprint})
 			continue
 		}
-		if err := bin.Move(string(root), c.Path); err != nil {
+		if removal == ToDelete {
+			err = bin.Delete(c.Path)
+		} else {
+			err = bin.Move(string(root), c.Path)
+		}
+		if err != nil {
 			out.Failed = append(out.Failed, Failure{Item: item, Err: err})
+			continue
+		}
+		if removal == ToDelete {
+			out.Deleted = append(out.Deleted, item)
 			continue
 		}
 		out.Trashed = append(out.Trashed, item)

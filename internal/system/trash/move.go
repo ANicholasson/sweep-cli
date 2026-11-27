@@ -7,7 +7,7 @@ import (
 )
 
 // A Mover is the Trash port on every operating system. On the ones without
-// an adapter, every method refuses and removes nothing.
+// an adapter, Move and Restore refuse and remove nothing.
 var _ clean.Trash = Mover{}
 
 // ErrUnavailable is returned when this operating system cannot move a

@@ -38,7 +38,7 @@ func TestAChangeBetweenTheRecheckAndTheMoveIsRecorded(t *testing.T) {
 		saw = true
 	}
 
-	got := clean.Run(files, sweeptest.Git{}, bin, built)
+	got := clean.Run(files, sweeptest.Git{}, bin, built, clean.ToTrash)
 
 	if !saw {
 		t.Fatal("the change never landed")

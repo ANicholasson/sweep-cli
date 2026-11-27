@@ -11,19 +11,24 @@ import (
 	"github.com/ANicholasson/sweep-cli/internal/domain/clean"
 )
 
-// Clean writes what a Clean did. Each Candidate that was moved is listed
-// under "Moved to trash", each Skip under "Skipped" with the Safety rule
-// that kept it, and each Candidate that could not be moved under "Failed".
-// The summary says the moved space was moved to the trash. It never says
-// the space was reclaimed.
+// Clean writes what a Clean did. A Trash lists each moved Candidate under
+// "Moved to trash" and says that space was moved to the trash, never
+// reclaimed. A Delete lists each removed Candidate under "Deleted" and
+// says that space was reclaimed. Each Skip is under "Skipped" with the
+// Safety rule that kept it, and each Candidate that could not be moved
+// or deleted is under "Failed".
 func Clean(w io.Writer, result clean.Result) error {
 	var out bytes.Buffer
-	writeItems(&out, "Moved to trash", result.Trashed, func(item clean.Item) string {
+	title, items, line := "Moved to trash", result.Trashed, "Moved to trash: %s\n"
+	if result.How == clean.ToDelete {
+		title, items, line = "Deleted", result.Deleted, "Reclaimed: %s\n"
+	}
+	writeItems(&out, title, items, func(item clean.Item) string {
 		return item.Path
 	})
 	writeSkipped(&out, result.Skipped)
 	writeFailed(&out, result.Failed)
-	fmt.Fprintf(&out, "Moved to trash: %s\n", amount(result.Trashed))
+	fmt.Fprintf(&out, line, amount(items))
 	fmt.Fprintf(&out, "Skipped %s\n", amount(sizesOfSkips(result.Skipped)))
 	fmt.Fprintf(&out, "Failed %s\n", amount(sizesOfFails(result.Failed)))
 	_, err := w.Write(out.Bytes())

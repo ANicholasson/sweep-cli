@@ -11,9 +11,10 @@ import (
 )
 
 // Trash is the fake of clean.Trash. It moves paths inside Files and can
-// put them back as the same files. Fail, when set for a path, makes Move
-// return that error and leave the path in place. Before runs at the start
-// of Move, which is after a Clean has re-checked the path.
+// put them back as the same files. Delete removes them and cannot put
+// them back. Fail, when set for a path, makes Move and Delete return that
+// error and leave the path in place. Before runs at the start of Move and
+// Delete, which is after a Clean has re-checked the path.
 type Trash struct {
 	Files  *Files
 	Fail   map[string]error
@@ -39,17 +40,32 @@ func NewTrash(files *Files) *Trash {
 // The first argument is the Root a real trash follows a Link down to.
 // The fake has no Links, so it is ignored.
 func (t *Trash) Move(_, p string) error {
+	saved, err := t.take("move", p)
+	if err != nil {
+		return err
+	}
+	t.held[p] = append(t.held[p], saved)
+	t.Moved = append(t.Moved, p)
+	return nil
+}
+
+func (t *Trash) Delete(p string) error {
+	_, err := t.take("delete", p)
+	return err
+}
+
+func (t *Trash) take(op, p string) (held, error) {
 	if t.Before != nil {
 		t.Before(p)
 	}
 	if err := t.Fail[p]; err != nil {
-		return err
+		return held{}, err
 	}
 	parent := path.Dir(p)
 	name := path.Base(p)
 	pn := t.Files.nodes[parent]
 	if pn == nil || t.Files.nodes[p] == nil || slices.Index(pn.inside, name) < 0 {
-		return &fs.PathError{Op: "move", Path: p, Err: fs.ErrNotExist}
+		return held{}, &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
 	}
 	saved := map[string]*fakeNode{}
 	prefix := p + "/"
@@ -63,9 +79,7 @@ func (t *Trash) Move(_, p string) error {
 	}
 	i := slices.Index(pn.inside, name)
 	pn.inside = slices.Delete(pn.inside, i, i+1)
-	t.held[p] = append(t.held[p], held{name: name, parent: parent, nodes: saved})
-	t.Moved = append(t.Moved, p)
-	return nil
+	return held{name: name, parent: parent, nodes: saved}, nil
 }
 
 // Restore puts the most recent Move of p back into Files.
