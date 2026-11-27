@@ -102,15 +102,20 @@ func TestALocationOutsideHomeIsNotAdded(t *testing.T) {
 }
 
 func TestAPathTheAdapterNamesOutsideHomeIsNotAdded(t *testing.T) {
+	// The binary cannot show this. A real listing of a directory names only
+	// paths inside it. The fake names a directory that exists outside the
+	// home, so the Scan's own check is what keeps it out. A missing path
+	// would be left out by the measurement failing, which is not that check.
 	files := sweeptest.NewFiles(sweeptest.Tree{
-		"home/cache/pack": sweeptest.File{Bytes: 8},
+		"home/cache/pack":    sweeptest.File{Bytes: 8},
+		"outside/cache/pack": sweeptest.File{Bytes: 8},
 	})
 	got := scan.Scan(redirect{files}, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, []domain.Ecosystem{
 		cacheEcosystem(domain.InSharedCache{Linux: "cache", MacOS: "cache", Windows: "cache"}),
 	}, scanNow, scan.Settings{Home: sweeptest.Top + "/home", SharedCaches: true})
 
-	if len(got.Added) != 0 || len(got.Candidates) != 0 {
-		t.Errorf("added %v, candidates %+v, want nothing: the adapter named a path outside home", got.Added, got.Candidates)
+	if len(got.Added) != 0 || len(got.Candidates) != 0 || len(got.Unreadable) != 0 {
+		t.Errorf("added %v, candidates %+v, unreadable %v, want nothing and nothing unread", got.Added, got.Candidates, got.Unreadable)
 	}
 }
 
@@ -152,7 +157,7 @@ func (r redirect) List(dir string) ([]scan.Entry, error) {
 	}
 	for i := range entries {
 		if entries[i].Name == "cache" {
-			entries[i].Path = "/outside/cache"
+			entries[i].Path = sweeptest.Top + "/outside/cache"
 		}
 	}
 	return entries, nil
