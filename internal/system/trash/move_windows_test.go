@@ -3,7 +3,9 @@
 package trash
 
 import (
+	"bytes"
 	"cmp"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain/clean"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
@@ -275,7 +278,8 @@ func TestATrashedFileAppearsInTheRecycleBin(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "")
 	dir := t.TempDir()
 	src := filepath.Join(dir, "keep.txt")
-	if err := os.WriteFile(src, []byte("keep\n"), 0o644); err != nil {
+	beforeBytes := []byte("keep\n")
+	if err := os.WriteFile(src, beforeBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	putBack(t, dir, src)
@@ -290,28 +294,22 @@ func TestATrashedFileAppearsInTheRecycleBin(t *testing.T) {
 	if _, err := os.Lstat(src); !os.IsNotExist(err) {
 		t.Fatalf("the file is still at %s: %v", src, err)
 	}
-	home, err := recycleBin(abs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	suffix := recycledSuffix(t, home, abs)
-	landed := filepath.Join(home, "$R"+suffix)
+	landed, info := recycleRecord(t, abs)
 	if mustID(t, landed) != before {
 		t.Errorf("the Recycle Bin holds a different file")
 	}
-	info, err := os.ReadFile(filepath.Join(home, "$I"+suffix))
-	if err != nil {
-		t.Fatal(err)
+	gotPath, gotSize := decodeRecycleRecord(t, info, abs)
+	if gotPath != abs {
+		t.Fatalf("recycle info path = %q, want %s", gotPath, abs)
 	}
-	gotPath, _, _, ok := parseRecycleInfo(info)
-	if !ok || gotPath != abs {
-		t.Fatalf("recycle info path = %q, ok %v, want %s", gotPath, ok, abs)
+	if gotSize != uint64(len(beforeBytes)) {
+		t.Errorf("recorded size %d, want %d", gotSize, len(beforeBytes))
 	}
 	if err := bin(t).Restore(dir, src); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(src)
-	if err != nil || string(got) != "keep\n" {
+	if err != nil || !bytes.Equal(got, beforeBytes) {
 		t.Fatalf("restored %q, %v", got, err)
 	}
 	if mustID(t, src) != before {
@@ -458,6 +456,61 @@ func TestALongPathIsTrashedOrLeftInPlace(t *testing.T) {
 	}
 }
 
+func TestARemovableOrNetworkDriveHasNoRecycleBin(t *testing.T) {
+	for _, kind := range []uintptr{0, 1, driveRemovable, driveRemote, 5, 6} {
+		if driveKeepsRecycleBin(kind) {
+			t.Errorf("drive type %d was treated as having a Recycle Bin", kind)
+		}
+	}
+	if !driveKeepsRecycleBin(driveFixed) {
+		t.Fatal("a fixed drive was refused")
+	}
+}
+
+func TestAVolumeWithNoRecycleBinIsLeftInPlace(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	letter := freeDrive(t)
+	dir := t.TempDir()
+	if out, err := exec.Command("subst", letter+":", dir).CombinedOutput(); err != nil {
+		if os.Getenv("CI") == "" {
+			t.Skipf("subst %s: %v: %s", letter, err, out)
+		}
+		t.Fatalf("subst %s: %v: %s", letter, err, out)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("subst", letter+":", "/d").Run()
+	})
+	root := letter + `:\`
+	kind, err := driveType(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != driveFixed {
+		t.Fatalf("subst drive type %d, want a fixed drive that has no Recycle Bin", kind)
+	}
+	binRoot := letter + `:\$Recycle.Bin`
+	if _, err := os.Lstat(binRoot); !os.IsNotExist(err) {
+		t.Fatalf("%s is already there: %v", binRoot, err)
+	}
+	src := letter + `:\keep.txt`
+	if err := os.WriteFile(src, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	putBack(t, root, src)
+	before := mustID(t, src)
+	err = bin(t).Move(root, src)
+	if err == nil {
+		t.Fatal("Move reported success on a volume with no Recycle Bin")
+	}
+	if _, statErr := os.Lstat(binRoot); !os.IsNotExist(statErr) {
+		t.Fatalf("Move created %s: %v", binRoot, statErr)
+	}
+	got, readErr := os.ReadFile(src)
+	if readErr != nil || string(got) != "keep\n" || mustID(t, src) != before {
+		t.Fatalf("the file was not left in place: %v; file %q, %v", err, got, readErr)
+	}
+}
+
 func TestAPathOnAnotherDriveIsTrashedOrLeftInPlace(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "")
 	letter := freeDrive(t)
@@ -525,11 +578,99 @@ func putBack(t *testing.T, root, path string) {
 
 func recycledSuffix(t *testing.T, binDir, abs string) string {
 	t.Helper()
-	suffix, _, err := findRecycled(binDir, abs)
+	suffix, err := findRecycled(binDir, abs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return suffix
+}
+
+// documentedBin is <volume>\$Recycle.Bin\<SID>, the folder the shell lists.
+// It does not use the mover's own path helper.
+func documentedBin(t *testing.T, abs string) string {
+	t.Helper()
+	vol := filepath.VolumeName(abs)
+	if vol == "" {
+		t.Fatalf("%s has no volume", abs)
+	}
+	if !strings.HasSuffix(vol, `\`) {
+		vol += `\`
+	}
+	sid, err := currentSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(vol, "$Recycle.Bin", sid)
+}
+
+// recycleRecord reads the $I file whose path bytes are abs. The match is
+// the raw UTF-16 path, not the mover's record parser.
+func recycleRecord(t *testing.T, abs string) (payload string, info []byte) {
+	t.Helper()
+	home := documentedBin(t, abs)
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatalf("the Recycle Bin: %v", err)
+	}
+	needle := utf16Bytes(utf16.Encode([]rune(abs + "\x00")))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), "$I") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(home, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(data, needle) {
+			continue
+		}
+		return filepath.Join(home, "$R"+strings.TrimPrefix(e.Name(), "$I")), data
+	}
+	t.Fatalf("%s is not in the Recycle Bin", abs)
+	return "", nil
+}
+
+// decodeRecycleRecord reads a version-2 $I file. The path length counts
+// UTF-16 code units and includes the NUL, and the file ends at the path.
+func decodeRecycleRecord(t *testing.T, data []byte, abs string) (string, uint64) {
+	t.Helper()
+	if len(data) < 28 {
+		t.Fatalf("the $I record is %d bytes", len(data))
+	}
+	version := binary.LittleEndian.Uint64(data[:8])
+	if version != 2 {
+		t.Fatalf("version %d, want 2", version)
+	}
+	units := utf16.Encode([]rune(abs + "\x00"))
+	n := binary.LittleEndian.Uint32(data[24:28])
+	if int(n) != len(units) {
+		t.Fatalf("path length %d, want %d UTF-16 code units including NUL", n, len(units))
+	}
+	want := 28 + int(n)*2
+	if len(data) != want {
+		t.Fatalf("the $I record is %d bytes, want %d", len(data), want)
+	}
+	chars := make([]uint16, n)
+	for i := range chars {
+		chars[i] = binary.LittleEndian.Uint16(data[28+i*2:])
+	}
+	if chars[len(chars)-1] != 0 {
+		t.Fatal("the path length does not include the NUL")
+	}
+	for i, u := range units {
+		if chars[i] != u {
+			t.Fatalf("the path differs at unit %d", i)
+		}
+	}
+	return string(utf16.Decode(chars[:len(chars)-1])), binary.LittleEndian.Uint64(data[8:16])
+}
+
+func utf16Bytes(units []uint16) []byte {
+	out := make([]byte, len(units)*2)
+	for i, u := range units {
+		binary.LittleEndian.PutUint16(out[i*2:], u)
+	}
+	return out
 }
 
 func holdExclusive(t *testing.T, path string) syscall.Handle {

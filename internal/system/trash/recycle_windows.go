@@ -34,8 +34,15 @@ const (
 
 var (
 	getVolumePathName = syscall.NewLazyDLL("kernel32.dll").NewProc("GetVolumePathNameW")
+	getDriveType      = syscall.NewLazyDLL("kernel32.dll").NewProc("GetDriveTypeW")
 	setFileAttributes = syscall.NewLazyDLL("kernel32.dll").NewProc("SetFileAttributesW")
 	shChangeNotify    = syscall.NewLazyDLL("shell32.dll").NewProc("SHChangeNotify")
+)
+
+const (
+	driveRemovable = 2
+	driveFixed     = 3
+	driveRemote    = 4
 )
 
 func recycleMove(root, path string) error {
@@ -47,18 +54,21 @@ func recycleMove(root, path string) error {
 	if err != nil {
 		return err
 	}
-	attr, err := fileAttributes(abs)
-	if err != nil {
-		return err
-	}
 	bin, err := recycleBin(abs)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(bin, 0o700); err != nil {
+	// The per-user folder is created only inside a Recycle Bin that is
+	// already there. Mkdir does not create $Recycle.Bin itself.
+	if err := os.Mkdir(bin, 0o700); err != nil && !os.IsExist(err) {
 		return err
 	}
-	suffix, iPath, err := claimInfo(bin, info.Name(), abs, info, attr)
+	if st, err := os.Lstat(bin); err != nil {
+		return err
+	} else if !st.IsDir() {
+		return fmt.Errorf("%s has no Recycle Bin", bin)
+	}
+	suffix, iPath, err := claimInfo(bin, info.Name(), abs, info)
 	if err != nil {
 		return err
 	}
@@ -89,11 +99,15 @@ func recycleRestore(root, path string) error {
 	if err != nil {
 		return err
 	}
-	suffix, attr, err := findRecycled(bin, abs)
+	suffix, err := findRecycled(bin, abs)
 	if err != nil {
 		return err
 	}
 	src := filepath.Join(bin, "$R"+suffix)
+	attr, err := fileAttributes(src)
+	if err != nil {
+		return err
+	}
 	srcInfo, err := os.Lstat(src)
 	if err != nil {
 		return err
@@ -120,16 +134,53 @@ func absPath(path string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
+// recycleBin is <volume>\$Recycle.Bin\<SID> when that volume already has a
+// Recycle Bin. A removable or network volume does not, and neither does a
+// fixed volume whose $Recycle.Bin is absent. This does not create either.
 func recycleBin(path string) (string, error) {
 	vol, err := volumeOf(path)
 	if err != nil {
 		return "", err
 	}
+	kind, err := driveType(vol)
+	if err != nil {
+		return "", err
+	}
+	if !driveKeepsRecycleBin(kind) {
+		return "", fmt.Errorf("%s has no Recycle Bin", strings.TrimRight(vol, `\`))
+	}
 	sid, err := currentSID()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(vol, "$Recycle.Bin", sid), nil
+	root := filepath.Join(vol, "$Recycle.Bin")
+	info, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("%s has no Recycle Bin", strings.TrimRight(vol, `\`))
+		}
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s has no Recycle Bin", strings.TrimRight(vol, `\`))
+	}
+	return filepath.Join(root, sid), nil
+}
+
+// driveKeepsRecycleBin is true only for a fixed drive. Removable and
+// network volumes have no Recycle Bin.
+func driveKeepsRecycleBin(kind uintptr) bool {
+	return kind == driveFixed
+}
+
+func driveType(root string) (uintptr, error) {
+	p, err := syscall.UTF16PtrFromString(root)
+	if err != nil {
+		return 0, err
+	}
+	// GetDriveTypeW returns the drive type. Zero is DRIVE_UNKNOWN.
+	r, _, _ := getDriveType.Call(uintptr(unsafe.Pointer(p)))
+	return r, nil
 }
 
 func volumeOf(path string) (string, error) {
@@ -191,7 +242,7 @@ func currentSID() (string, error) {
 
 // claimInfo writes the $I file and returns the shared suffix of the pair.
 // The Candidate is still in place when this returns.
-func claimInfo(bin, base, abs string, info os.FileInfo, attr uint32) (string, string, error) {
+func claimInfo(bin, base, abs string, info os.FileInfo) (string, string, error) {
 	ext := filepath.Ext(base)
 	if len(ext) > 16 {
 		ext = ""
@@ -207,7 +258,7 @@ func claimInfo(bin, base, abs string, info os.FileInfo, attr uint32) (string, st
 		if exists(iPath) || exists(rPath) {
 			continue
 		}
-		if err := writeInfo(iPath, abs, fileSize(info), attr); err != nil {
+		if err := writeInfo(iPath, abs, fileSize(info)); err != nil {
 			if errors.Is(err, os.ErrExist) {
 				continue
 			}
@@ -239,11 +290,10 @@ func randomID() (string, error) {
 }
 
 // writeInfo writes a version-2 $I file. The path length counts UTF-16
-// code units and includes the trailing NUL, which is the Windows 10 layout.
-// Four bytes after the path are the Candidate's settable attributes.
-func writeInfo(path, original string, size uint64, attr uint32) error {
+// code units and includes the trailing NUL. The file ends at that path.
+func writeInfo(path, original string, size uint64) error {
 	encoded := utf16.Encode([]rune(original + "\x00"))
-	buf := make([]byte, 28+len(encoded)*2+4)
+	buf := make([]byte, 28+len(encoded)*2)
 	binary.LittleEndian.PutUint64(buf[0:], recycleVersion)
 	binary.LittleEndian.PutUint64(buf[8:], size)
 	binary.LittleEndian.PutUint64(buf[16:], nowFiletime())
@@ -251,7 +301,6 @@ func writeInfo(path, original string, size uint64, attr uint32) error {
 	for i, u := range encoded {
 		binary.LittleEndian.PutUint16(buf[28+i*2:], u)
 	}
-	binary.LittleEndian.PutUint32(buf[28+len(encoded)*2:], uint32(attr))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -275,14 +324,13 @@ func nowFiletime() uint64 {
 	return uint64(time.Now().UnixNano()/100) + windowsToUnix
 }
 
-func findRecycled(bin, abs string) (string, uint32, error) {
+func findRecycled(bin, abs string) (string, error) {
 	entries, err := os.ReadDir(bin)
 	if err != nil {
-		return "", 0, err
+		return "", err
 	}
 	var bestWhen uint64
 	var best string
-	var bestAttr uint32
 	var found bool
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "$I") {
@@ -290,9 +338,9 @@ func findRecycled(bin, abs string) (string, uint32, error) {
 		}
 		data, err := os.ReadFile(filepath.Join(bin, e.Name()))
 		if err != nil {
-			return "", 0, err
+			return "", err
 		}
-		got, when, attr, ok := parseRecycleInfo(data)
+		got, when, ok := parseRecycleInfo(data)
 		if !ok || got != abs {
 			continue
 		}
@@ -300,40 +348,39 @@ func findRecycled(bin, abs string) (string, uint32, error) {
 			found = true
 			bestWhen = when
 			best = strings.TrimPrefix(e.Name(), "$I")
-			bestAttr = attr
 		}
 	}
 	if !found {
-		return "", 0, fmt.Errorf("%s is not in the trash", abs)
+		return "", fmt.Errorf("%s is not in the trash", abs)
 	}
-	return best, bestAttr, nil
+	return best, nil
 }
 
-func parseRecycleInfo(data []byte) (path string, when uint64, attr uint32, ok bool) {
+func parseRecycleInfo(data []byte) (path string, when uint64, ok bool) {
 	if len(data) < 28 {
-		return "", 0, 0, false
+		return "", 0, false
 	}
 	if binary.LittleEndian.Uint64(data[0:8]) != recycleVersion {
-		return "", 0, 0, false
+		return "", 0, false
 	}
 	when = binary.LittleEndian.Uint64(data[16:24])
 	n := binary.LittleEndian.Uint32(data[24:28])
 	end := 28 + int(n)*2
-	if n == 0 || end > len(data) {
-		return "", 0, 0, false
+	if n == 0 || end != len(data) {
+		return "", 0, false
 	}
 	chars := make([]uint16, n)
 	for i := range chars {
 		chars[i] = binary.LittleEndian.Uint16(data[28+i*2:])
 	}
-	path = strings.TrimRight(string(utf16.Decode(chars)), "\x00")
+	if chars[n-1] != 0 {
+		return "", 0, false
+	}
+	path = string(utf16.Decode(chars[:n-1]))
 	if path == "" {
-		return "", 0, 0, false
+		return "", 0, false
 	}
-	if len(data) >= end+4 {
-		attr = binary.LittleEndian.Uint32(data[end : end+4])
-	}
-	return path, when, attr, true
+	return path, when, true
 }
 
 func fileAttributes(path string) (uint32, error) {
