@@ -73,14 +73,14 @@ func TestCleanUsesTheRecycleBinWhenTheTrashDirectoryIsUnset(t *testing.T) {
 			continue
 		}
 		p := at(trap.Path)
-		was, ok := before[p]
-		if !ok {
-			t.Errorf("the Trap %s was not listed", trap.Path)
-			continue
-		}
-		now, ok := after[p]
-		if !ok || now != was {
-			t.Errorf("the Trap %s changed in the listing", trap.Path)
+		// A Trap behind a Link is not a path the walk enters.
+		if was, ok := before[p]; ok {
+			now, ok := after[p]
+			if !ok || now != was {
+				t.Errorf("the Trap %s changed in the listing", trap.Path)
+			}
+		} else if _, err := os.Lstat(p); err != nil {
+			t.Errorf("the Trap %s did not survive: %v", trap.Path, err)
 		}
 		if du(t, p) != trapSize[trap.Path] {
 			t.Errorf("the Trap %s is %d bytes, du said %d", trap.Path, du(t, p), trapSize[trap.Path])

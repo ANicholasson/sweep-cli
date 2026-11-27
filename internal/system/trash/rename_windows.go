@@ -28,13 +28,18 @@ const (
 	fileOpenForBackup       = 0x00004000
 	fileOpenReparsePoint    = 0x00200000
 	objCaseInsensitive      = 0x00000040
+
+	// fileRenameInformation is the native rename. The name is one
+	// component of a directory handle already opened, so a Link swapped
+	// in afterwards is not followed.
+	fileRenameInformation = 10
 )
 
 var (
 	ntdll                 = syscall.NewLazyDLL("ntdll.dll")
 	ntCreateFile          = ntdll.NewProc("NtCreateFile")
+	ntSetInformationFile  = ntdll.NewProc("NtSetInformationFile")
 	rtlNtStatusToDosError = ntdll.NewProc("RtlNtStatusToDosError")
-	moveFileEx            = syscall.NewLazyDLL("kernel32.dll").NewProc("MoveFileExW")
 )
 
 type ntUnicodeString struct {
@@ -68,21 +73,21 @@ func renameBetween(oldpath, oldRoot string, followOld bool, newpath, newRoot str
 	if err != nil {
 		return err
 	}
+	defer func() { _ = syscall.CloseHandle(oldParent) }()
 	src, err := openChild(oldParent, filepath.Base(oldpath))
 	if err != nil {
-		_ = syscall.CloseHandle(oldParent)
 		return err
 	}
-	_ = syscall.CloseHandle(src)
-	_ = syscall.CloseHandle(oldParent)
+	defer func() { _ = syscall.CloseHandle(src) }()
 	newParent, err := openParent(newpath, newRoot, followNew, destAccess)
 	if err != nil {
 		return err
 	}
-	_ = syscall.CloseHandle(newParent)
-	// The opens above refused a Link. MoveFileEx does not copy, so a
-	// different volume fails and the path stays where it was.
-	return moveSameVolume(oldpath, newpath)
+	defer func() { _ = syscall.CloseHandle(newParent) }()
+	if err := renameByHandle(src, newParent, filepath.Base(newpath)); err != nil {
+		return &os.PathError{Op: "move", Path: oldpath, Err: err}
+	}
+	return nil
 }
 
 const (
@@ -295,20 +300,55 @@ func ntErrno(status uintptr) error {
 	return syscall.Errno(r)
 }
 
-// moveSameVolume renames oldpath to newpath. No copy flag is set, so a
-// different volume is an error and oldpath is left in place.
-func moveSameVolume(oldpath, newpath string) error {
-	from, err := syscall.UTF16PtrFromString(long(oldpath))
+// renameByHandle renames the open file into dstDir under name. The name is
+// one component. Replace is off, so an existing name is left alone.
+func renameByHandle(src, dstDir syscall.Handle, name string) error {
+	chars, err := syscall.UTF16FromString(name)
 	if err != nil {
 		return err
 	}
-	to, err := syscall.UTF16PtrFromString(long(newpath))
-	if err != nil {
-		return err
+	if len(chars) < 2 {
+		return errors.New("the destination has no name")
 	}
-	r, _, callErr := moveFileEx.Call(uintptr(unsafe.Pointer(from)), uintptr(unsafe.Pointer(to)), 0)
-	if r == 0 {
-		return &os.PathError{Op: "move", Path: oldpath, Err: callErr}
+	// FILE_RENAME_INFORMATION: a BOOLEAN, then a handle-aligned directory,
+	// then the byte length of the name, then the name and its NUL.
+	handleSize := int(unsafe.Sizeof(syscall.Handle(0)))
+	rootOff := handleSize
+	lenOff := rootOff + handleSize
+	fileOff := lenOff + 4
+	if fileOff%2 != 0 {
+		fileOff++
+	}
+	nameBytes := (len(chars) - 1) * 2
+	need := fileOff + len(chars)*2
+	raw := make([]byte, need+handleSize)
+	align := int(uintptr(unsafe.Pointer(&raw[0])) % uintptr(handleSize))
+	pad := 0
+	if align != 0 {
+		pad = handleSize - align
+	}
+	buf := raw[pad : pad+need]
+	*(*syscall.Handle)(unsafe.Pointer(&buf[rootOff])) = dstDir
+	buf[lenOff] = byte(nameBytes)
+	buf[lenOff+1] = byte(nameBytes >> 8)
+	buf[lenOff+2] = byte(nameBytes >> 16)
+	buf[lenOff+3] = byte(nameBytes >> 24)
+	for i, c := range chars {
+		buf[fileOff+i*2] = byte(c)
+		buf[fileOff+i*2+1] = byte(c >> 8)
+	}
+	var iosb ioStatusBlock
+	status, _, _ := ntSetInformationFile.Call(
+		uintptr(src),
+		uintptr(unsafe.Pointer(&iosb)),
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+		fileRenameInformation,
+	)
+	runtime.KeepAlive(buf)
+	runtime.KeepAlive(&iosb)
+	if status != 0 {
+		return ntErrno(status)
 	}
 	return nil
 }
