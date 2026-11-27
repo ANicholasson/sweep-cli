@@ -217,7 +217,19 @@ cmd_run() {
 	listing "$run/fixture" > "$out/fixture-before.txt"
 	touch "$out/.started"
 	set +e
-	(cd "$dir" && HOME="$run/scratch/home" USERPROFILE="$run/scratch/home" "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
+	# Default the home to the scratch copy, so a Scan finds the npm cache
+	# and a dry run's Plan stays out of the Fixture. A caller that already
+	# pointed HOME or USERPROFILE inside this run keeps it. That is how a
+	# macOS Clean puts the trash under the Fixture instead of the scratch copy.
+	home="$run/scratch/home"
+	case ${HOME:-} in
+	"$run"/*) home=$HOME ;;
+	esac
+	profile="$run/scratch/home"
+	case ${USERPROFILE:-} in
+	"$run"/*) profile=$USERPROFILE ;;
+	esac
+	(cd "$dir" && HOME="$home" USERPROFILE="$profile" "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
 	status=$?
 	set -e
 	printf '%s\n' "$status" > "$out/status"
