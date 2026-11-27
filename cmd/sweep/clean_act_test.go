@@ -126,9 +126,18 @@ func TestCleanSkipsACandidateThatChangedAndTrashesTheRest(t *testing.T) {
 		t.Fatalf("dry run exit %d, stderr %q", dry.status, dry.stderr)
 	}
 	planned := decodePlan(t, planPath)
+	if !strings.Contains(dry.stdout, configurationFile(b.config)) {
+		t.Fatalf("the dry run did not read %s\n%s", configurationFile(b.config), dry.stdout)
+	}
 	changed := at("projects/shifted-app/node_modules")
 	if !planHolds(t, planned, changed) {
 		t.Fatalf("the Plan does not hold %s", changed)
+	}
+	for _, c := range planned.Candidates {
+		rel, err := filepath.Rel(dir, c.Path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Errorf("the Plan holds %s, outside the Fixture", c.Path)
+		}
 	}
 	added := filepath.Join(changed, "changed.txt")
 	if err := os.WriteFile(added, []byte("changed\n"), 0o644); err != nil {
