@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -125,9 +126,18 @@ func TestCleanSkipsACandidateThatChangedAndTrashesTheRest(t *testing.T) {
 		t.Fatalf("dry run exit %d, stderr %q", dry.status, dry.stderr)
 	}
 	planned := decodePlan(t, planPath)
+	if !strings.Contains(dry.stdout, configurationFile(b.config)) {
+		t.Fatalf("the dry run did not read %s\n%s", configurationFile(b.config), dry.stdout)
+	}
 	changed := at("projects/shifted-app/node_modules")
 	if !planHolds(t, planned, changed) {
 		t.Fatalf("the Plan does not hold %s", changed)
+	}
+	for _, c := range planned.Candidates {
+		rel, err := filepath.Rel(dir, c.Path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Errorf("the Plan holds %s, outside the Fixture", c.Path)
+		}
 	}
 	added := filepath.Join(changed, "changed.txt")
 	if err := os.WriteFile(added, []byte("changed\n"), 0o644); err != nil {
@@ -290,9 +300,7 @@ func TestCleanFollowsALinkAboveTheRoot(t *testing.T) {
 	dir, _ := b.buildFixture(t)
 	b.data = filepath.Join(dir, "trash-home")
 	link := filepath.Join(t.TempDir(), "fx")
-	if err := os.Symlink(dir, link); err != nil {
-		t.Fatal(err)
-	}
+	linkTo(t, dir, link)
 	cwd := filepath.Join(link, "projects", "web-app")
 	b.pwd = cwd
 	candidate := filepath.Join(cwd, "node_modules")
@@ -348,9 +356,7 @@ func TestCleanFollowsALinkAboveTheTrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
+	linkTo(t, real, link)
 	b.data = link
 	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
 	note := at("projects/stale-app/node_modules/fake-old/note.txt")
@@ -492,12 +498,49 @@ func trashedCopy(t *testing.T, dataHome, original string) string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(data), "Path="+abs+"\n") {
+		if recordedPath(string(data), abs) {
 			return filepath.Join(files, strings.TrimSuffix(e.Name(), ".trashinfo"))
 		}
 	}
 	t.Fatalf("%s is not in the trash", original)
 	return ""
+}
+
+// recordedPath reports whether a trash info file names abs. The Path line
+// percent-encodes bytes outside the unreserved set, so a Windows path is
+// not stored as its raw spelling.
+func recordedPath(data, abs string) bool {
+	for _, line := range strings.Split(data, "\n") {
+		rest, ok := strings.CutPrefix(line, "Path=")
+		if !ok {
+			continue
+		}
+		got, err := percentDecode(rest)
+		if err == nil && got == abs {
+			return true
+		}
+	}
+	return false
+}
+
+func percentDecode(s string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			b.WriteByte(s[i])
+			continue
+		}
+		if i+2 >= len(s) {
+			return "", os.ErrInvalid
+		}
+		n, err := strconv.ParseUint(s[i+1:i+3], 16, 8)
+		if err != nil {
+			return "", err
+		}
+		b.WriteByte(byte(n))
+		i += 2
+	}
+	return b.String(), nil
 }
 
 func linkTo(t *testing.T, target, link string) {

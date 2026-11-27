@@ -23,8 +23,10 @@ type binaries struct {
 	cache          string
 	// data is the directory XDG_DATA_HOME points at, so a Clean's trash is
 	// there and never in the machine's own trash. Empty uses a fresh
-	// temporary directory.
-	data string
+	// temporary directory. omitData leaves XDG_DATA_HOME unset, so Windows
+	// uses the Recycle Bin. A test that sets omitData restores what it moves.
+	data     string
+	omitData bool
 	// pwd is the PWD a shell would export for the working directory. Empty
 	// leaves the environment's PWD. Set it when that directory is reached
 	// through a Link and the Plan should keep that spelling.
@@ -82,7 +84,7 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	cmd.Dir = dir
 	configHome, cacheHome := b.userHomes(t)
 	dataHome := b.data
-	if dataHome == "" {
+	if dataHome == "" && !b.omitData {
 		dataHome = t.TempDir()
 	}
 	if runtime.GOOS == "darwin" && b.data != "" && b.config == "" {
@@ -91,6 +93,9 @@ func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 		ensureDarwinHome(t, dataHome)
 	}
 	env := pointUserDirs(os.Environ(), configHome, cacheHome, dataHome)
+	if b.omitData {
+		env = without(env, "XDG_DATA_HOME")
+	}
 	if b.pwd != "" {
 		env = append(without(env, "PWD"), "PWD="+b.pwd)
 	}
@@ -321,7 +326,7 @@ func TestTheRealWindowsCacheDirectoryIsDropped(t *testing.T) {
 }
 
 func movesToTrash() bool {
-	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 }
 
 // ensureDarwinHome creates home when a Clean will use it as HOME. A path

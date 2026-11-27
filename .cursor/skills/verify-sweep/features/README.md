@@ -46,7 +46,7 @@ Keep implementation details out of the map. Name only user paths, commands, requ
 - [Version and usage](./version-and-usage.md) covers `--version`, the usage message, and unknown commands and flags.
 - [Dry run writes a Plan](./clean-dry-run.md) covers the default Pick, the Plan file in the per-user cache, `--pick`, a Plan path inside a Candidate, a Plan path inside a Project, and the Configuration a dry run reads: Roots, the Stale threshold, the Ignore list and the file it names.
 - [Pick by Kind, Ecosystem and age](./clean-pick.md) covers narrowing a dry run by Kind and Ecosystem, changing the age that counts as Stale for one run, picking every Candidate whatever its age, and leaving Shared caches and Docker data unpicked.
-- [Clean carries out a Plan](./clean.md) covers moving the Plan's Candidates to the trash on Linux and macOS, a Skip under each Safety rule, a Candidate the trash cannot take, and a Plan that is refused.
+- [Clean carries out a Plan](./clean.md) covers moving the Plan's Candidates to the trash on Linux, macOS and Windows, a Skip under each Safety rule, a Candidate the trash cannot take, and a Plan that is refused.
 - [Configuration](./scan-configuration.md) covers the per-user file: default Roots, the Stale threshold, the Ignore list, and a missing or rejected file.
 
-Not built yet: Trash on Windows, and Delete. A Clean is driven only against `$RUN/fixture`, and its proof is the listing showing the Candidates the Plan moved are in the Fixture's trash and every Trap is still present.
+Not built yet: Delete. A Clean is driven only against `$RUN/fixture`, and its proof is the listing showing the Candidates the Plan moved are in the Fixture's trash and every Trap is still present.
