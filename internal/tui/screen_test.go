@@ -227,6 +227,43 @@ func TestUnreadPathsLeaveRoomForTheHighlightAndTheTotal(t *testing.T) {
 	if screen.Page(200, 80) != screen.Text() {
 		t.Fatalf("a tall terminal dropped part of the drawing:\n%s", screen.Page(200, 80))
 	}
+	short := screen.Page(80, 11)
+	if !strings.Contains(short, "Not read, so the list may be short and a Size may be low") {
+		t.Fatalf("the unread header was dropped:\n%s", short)
+	}
+	shown, more := 0, -1
+	for _, line := range strings.Split(short, "\n") {
+		if strings.HasPrefix(line, "  /locked/") {
+			shown++
+		}
+		var n int
+		if _, err := fmt.Sscanf(line, "  and %d more", &n); err == nil {
+			more = n
+		}
+	}
+	if more < 0 {
+		more = 0
+	}
+	if shown+more != len(unread) {
+		t.Fatalf("unread paths shown %d plus %d more, want %d\n%s", shown, more, len(unread), short)
+	}
+}
+
+func TestDockerStaysHighlightedOnAShortPane(t *testing.T) {
+	screen := tui.New(scan.Result{
+		Candidates: []domain.Candidate{candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)},
+		DockerData: domain.Reported(0),
+	})
+	if screen.Press([]byte("j")) {
+		t.Fatal("j quit")
+	}
+	page := screen.Page(80, 7)
+	if !strings.Contains(page, "> Docker data") {
+		t.Fatalf("Docker data left the screen:\n%s", page)
+	}
+	if !strings.Contains(page, "picked\n") {
+		t.Fatalf("the total left the screen:\n%s", page)
+	}
 }
 
 func TestABurstOfKeysIsAppliedOneAtATime(t *testing.T) {

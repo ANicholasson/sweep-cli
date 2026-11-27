@@ -151,7 +151,7 @@ func (s Screen) Page(width, height int) string {
 		}
 	}
 	reserve := 0
-	if len(body) > 0 && height > 0 {
+	if hi >= 0 && height > 0 {
 		reserve = 1
 	}
 	footer = fitFooter(footer, height-reserve)
@@ -193,18 +193,29 @@ func fitFooter(footer []string, limit int) []string {
 	if len(footer) <= limit {
 		return footer
 	}
-	total := -1
+	var must []int
 	for i, line := range footer {
-		if strings.HasSuffix(line, " picked") {
-			total = i
+		if strings.HasPrefix(line, "> ") || strings.HasSuffix(line, " picked") {
+			must = append(must, i)
 		}
 	}
-	start := len(footer) - limit
-	if total >= 0 && total < start {
-		out := []string{footer[total]}
-		return append(out, footer[len(footer)-(limit-1):]...)
+	if len(must) > limit {
+		must = must[len(must)-limit:]
 	}
-	return footer[start:]
+	keep := map[int]bool{}
+	for _, i := range must {
+		keep[i] = true
+	}
+	for i := len(footer) - 1; i >= 0 && len(keep) < limit; i-- {
+		keep[i] = true
+	}
+	var out []string
+	for i, line := range footer {
+		if keep[i] {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 func boundDiag(diag []string, room int) []string {
@@ -214,24 +225,30 @@ func boundDiag(diag []string, room int) []string {
 	if len(diag) <= room {
 		return diag
 	}
+	paths := unreadPaths(diag)
 	if room == 1 {
-		return []string{fmt.Sprintf("%d paths were not read", unreadCount(diag))}
+		return []string{fmt.Sprintf("%d paths were not read", len(paths))}
 	}
-	kept := append([]string{}, diag[:room-1]...)
-	return append(kept, fmt.Sprintf("  and %d more", len(diag)-(room-1)))
+	out := []string{notRead}
+	slots := room - 1
+	if len(paths) <= slots {
+		return append(out, paths...)
+	}
+	if slots == 1 {
+		return append(out, fmt.Sprintf("  and %d more", len(paths)))
+	}
+	out = append(out, paths[:slots-1]...)
+	return append(out, fmt.Sprintf("  and %d more", len(paths)-(slots-1)))
 }
 
-func unreadCount(diag []string) int {
-	n := 0
+func unreadPaths(diag []string) []string {
+	var paths []string
 	for _, line := range diag {
 		if strings.HasPrefix(line, "  ") {
-			n++
+			paths = append(paths, line)
 		}
 	}
-	if n == 0 {
-		return len(diag)
-	}
-	return n
+	return paths
 }
 
 func windowAround(lines []string, hi, budget int) []string {
