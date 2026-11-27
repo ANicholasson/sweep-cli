@@ -227,7 +227,10 @@ func TestUnreadPathsLeaveRoomForTheHighlightAndTheTotal(t *testing.T) {
 	if screen.Page(200, 80) != screen.Text() {
 		t.Fatalf("a tall terminal dropped part of the drawing:\n%s", screen.Page(200, 80))
 	}
-	short := screen.Page(80, 11)
+	short := screen.Page(80, 12)
+	if !strings.Contains(short, "/work/app\n") {
+		t.Fatalf("the Project heading was dropped:\n%s", short)
+	}
 	if !strings.Contains(short, "Not read, so the list may be short and a Size may be low") {
 		t.Fatalf("the unread header was dropped:\n%s", short)
 	}
@@ -246,6 +249,32 @@ func TestUnreadPathsLeaveRoomForTheHighlightAndTheTotal(t *testing.T) {
 	}
 	if shown+more != len(unread) {
 		t.Fatalf("unread paths shown %d plus %d more, want %d\n%s", shown, more, len(unread), short)
+	}
+}
+
+func TestUnreadPathsDoNotHideProjectHeadings(t *testing.T) {
+	unread := make([]scan.Unreadable, 25)
+	for i := range unread {
+		unread[i] = scan.Unreadable{Path: fmt.Sprintf("/locked/%02d", i), Err: errors.New("permission denied")}
+	}
+	when := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	screen := tui.New(scan.Result{
+		Candidates: []domain.Candidate{
+			candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "First.", 12288, when, true, false),
+			candidate("/work/two", "/work/two/node_modules", domain.Dependencies, "Second.", 12288, when, true, false),
+		},
+		DockerData: domain.Reported(0),
+		Unreadable: unread,
+	})
+	page := screen.Page(80, 23)
+	if !strings.Contains(page, "/work/app\n") || !strings.Contains(page, "/work/two\n") {
+		t.Fatalf("a Project heading is missing:\n%s", page)
+	}
+	screen.Press([]byte("j"))
+	page = screen.Page(80, 23)
+	two := strings.Index(page, "/work/two\n")
+	if two < 0 || !strings.Contains(page[two:], "> [x]") || !strings.Contains(page, "/work/app\n") {
+		t.Fatalf("the second Project cannot be told from the first:\n%s", page)
 	}
 }
 

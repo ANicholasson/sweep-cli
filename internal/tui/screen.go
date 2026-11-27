@@ -150,16 +150,39 @@ func (s Screen) Page(width, height int) string {
 			break
 		}
 	}
-	reserve := 0
-	if hi >= 0 && height > 0 {
-		reserve = 1
+	// The list, including the heading of the highlighted Candidate, comes
+	// before the unread paths. Those paths take only the rows left over.
+	minBody := 0
+	if hi >= 0 {
+		minBody = spanWithHeading(body, hi)
+		if minBody > height {
+			minBody = height
+		}
 	}
-	footer = fitFooter(footer, height-reserve)
-	diag = boundDiag(diag, height-reserve-len(footer))
-	budget := height - len(footer) - len(diag)
-	window := clipLines(windowAround(body, hi, budget), width)
+	footer = fitFooter(footer, height-minBody)
+	remaining := height - len(footer)
+	if remaining < 0 {
+		remaining = 0
+	}
+	bodyBudget := len(body)
+	if bodyBudget > remaining {
+		bodyBudget = remaining
+	}
+	diag = boundDiag(diag, remaining-bodyBudget)
+	window := clipLines(windowAround(body, hi, bodyBudget), width)
 	parts := append(append(window, clipLines(footer, width)...), clipLines(diag, width)...)
 	return strings.Join(parts, "\n") + "\n"
+}
+
+func spanWithHeading(body []string, hi int) int {
+	n := 1
+	if hi > 0 {
+		prev := body[hi-1]
+		if prev != "" && !strings.HasPrefix(prev, "> ") && !strings.HasPrefix(prev, "  [") {
+			n++
+		}
+	}
+	return n
 }
 
 func splitDrawing(lines []string) (body, footer, diag []string) {
