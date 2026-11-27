@@ -30,6 +30,8 @@ type Result struct {
 	// Configuration is the configuration file that was read, or empty when
 	// there was none. A Scan leaves it empty.
 	Configuration string
+	// StaleAfter is the threshold this Scan used.
+	StaleAfter time.Duration
 }
 
 // Unreadable is a path the Scan could not read, and why.
@@ -112,7 +114,7 @@ func Scan(files Files, git safety.Git, docker Docker, roots []domain.Root, ecosy
 		skip[f.id] = true
 	}
 	s.stamp(candidates, skip, now, settings.StaleAfter)
-	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data()}
+	return Result{Roots: slices.Clone(roots), Candidates: candidates, Unreadable: s.unreadable, DockerData: docker.Data(), StaleAfter: settings.StaleAfter}
 }
 
 type scanner struct {

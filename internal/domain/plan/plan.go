@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
@@ -56,19 +57,29 @@ type Choice struct {
 	Reason    string
 }
 
-// Build picks every Stale Candidate, and any Candidate whose path is one of
-// named. named is matched by file identity, so two spellings of one
-// Candidate are one pick. A path in named that is not a Candidate is an
-// UnknownPath. A Stale Candidate is "Stale". One that was only named is
-// "named with --pick". One that was left out is "used recently".
-func Build(files scan.Files, result scan.Result, named []string) (Plan, []Choice, error) {
+// Pick is the choice one dry run asked for. Named are paths from --pick.
+// Kinds and Ecosystems narrow the choice; an empty list does not. AnyAge
+// chooses every Candidate those lists allow. StaleNamed means this Scan's
+// threshold was given as --stale-days, and the reason uses Result.StaleAfter.
+type Pick struct {
+	Named      []string
+	Kinds      []domain.Kind
+	Ecosystems []string
+	AnyAge     bool
+	StaleNamed bool
+}
+
+// Build chooses the Candidates one Plan will act on. A path in pick.Named
+// is matched by file identity. A path that is not a Candidate is an
+// UnknownPath. A Shared cache is chosen only when it is named.
+func Build(files scan.Files, result scan.Result, pick Pick) (Plan, []Choice, error) {
 	type namedFile struct {
 		path string
 		id   scan.FileID
 	}
 	var wanted []namedFile
 	namedID := map[scan.FileID]bool{}
-	for _, p := range named {
+	for _, p := range pick.Named {
 		space, err := files.Space(p)
 		if err != nil {
 			return Plan{}, nil, UnknownPath{Path: p}
@@ -89,13 +100,7 @@ func Build(files scan.Files, result scan.Result, named []string) (Plan, []Choice
 		if chosen {
 			seen[space.File] = true
 		}
-		reason := "used recently"
-		if c.Stale {
-			reason = "Stale"
-		} else if chosen {
-			reason = "named with --pick"
-		}
-		take := c.Stale || chosen
+		take, reason := decide(c, chosen, pick, result.StaleAfter)
 		choices = append(choices, Choice{Candidate: c, Picked: take, Reason: reason})
 		if !take {
 			continue
@@ -112,6 +117,35 @@ func Build(files scan.Files, result scan.Result, named []string) (Plan, []Choice
 		}
 	}
 	return Plan{Roots: append([]domain.Root(nil), result.Roots...), Picked: picked}, choices, nil
+}
+
+func decide(c domain.Candidate, named bool, pick Pick, staleAfter time.Duration) (bool, string) {
+	if named {
+		return true, "named with --pick"
+	}
+	if c.Rule.SharedCache() {
+		return false, "Shared cache"
+	}
+	if len(pick.Kinds) > 0 && !slices.Contains(pick.Kinds, c.Rule.Kind) {
+		return false, "not named with --kind"
+	}
+	if len(pick.Ecosystems) > 0 && !slices.Contains(pick.Ecosystems, c.Ecosystem) {
+		return false, "not named with --ecosystem"
+	}
+	if pick.AnyAge {
+		return true, "--all"
+	}
+	if pick.StaleNamed {
+		days := int(staleAfter / (24 * time.Hour))
+		if c.Stale {
+			return true, fmt.Sprintf("older than --stale-days %d", days)
+		}
+		return false, fmt.Sprintf("newer than --stale-days %d", days)
+	}
+	if c.Stale {
+		return true, "Stale"
+	}
+	return false, "used recently"
 }
 
 // FingerprintOf measures path the way a Plan records it. Size counts each

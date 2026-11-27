@@ -45,6 +45,7 @@ Keep implementation details out of the map. Name only user paths, commands, requ
 - [A Scan of a tree built to mislead it](./scan-hostile.md) covers Links beneath a Root, a Root that is a Link, an unreadable directory inside a Project, a repository nested in a Candidate, and a `docker` that never answers.
 - [Version and usage](./version-and-usage.md) covers `--version`, the usage message, and unknown commands and flags.
 - [Dry run writes a Plan](./clean-dry-run.md) covers the default Pick, the Plan file in the per-user cache, `--pick`, a Plan path inside a Candidate, a Plan path inside a Project, and the Configuration a dry run reads: Roots, the Stale threshold, the Ignore list and the file it names.
+- [Pick by Kind, Ecosystem and age](./clean-pick.md) covers narrowing a dry run by Kind and Ecosystem, changing the age that counts as Stale for one run, picking every Candidate whatever its age, and leaving Shared caches and Docker data unpicked.
 - [Clean carries out a Plan](./clean.md) covers moving the Plan's Candidates to the trash on Linux and macOS, a Skip under each Safety rule, a Candidate the trash cannot take, and a Plan that is refused.
 - [Configuration](./scan-configuration.md) covers the per-user file: default Roots, the Stale threshold, the Ignore list, and a missing or rejected file.
 

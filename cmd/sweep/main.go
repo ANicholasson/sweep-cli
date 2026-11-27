@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,8 +43,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
 		_, _ = fmt.Fprintln(stderr, "usage: sweep scan [--json] [Root...]")
-		_, _ = fmt.Fprintln(stderr, "       sweep clean --dry-run [--plan file] [--pick path] [Root...]")
-		_, _ = fmt.Fprintln(stderr, "       sweep clean --plan file")
+		_, _ = fmt.Fprintln(stderr, "       "+cleanDryUsage)
+		_, _ = fmt.Fprintln(stderr, "       "+cleanActUsage)
 		_, _ = fmt.Fprintln(stderr, "       sweep --version")
 		flags.PrintDefaults()
 	}
@@ -76,7 +77,7 @@ func scanCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return misused
 	}
-	result, _, err := scanTree(given)
+	result, _, err := scanTree(given, nil)
 	if err != nil {
 		say(stderr, err)
 		return misused
@@ -100,22 +101,46 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sweep clean", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
-		_, _ = fmt.Fprintln(stderr, "usage: sweep clean --dry-run [--plan file] [--pick path] [Root...]")
-		_, _ = fmt.Fprintln(stderr, "       sweep clean --plan file")
+		writeCleanUsage(stderr)
 		flags.PrintDefaults()
 	}
 	dry := flags.Bool("dry-run", false, "write a Plan and remove nothing")
 	planPath := flags.String("plan", "", "file the Plan is written to, instead of the per-user cache")
 	var pick repeated
 	flags.Var(&pick, "pick", "add this Candidate to the Plan")
+	var kind repeated
+	flags.Var(&kind, "kind", "narrow the Pick to this Kind; repeat to name more than one")
+	var ecosystem repeated
+	flags.Var(&ecosystem, "ecosystem", "narrow the Pick to this Ecosystem; repeat to name more than one")
+	var staleDays daysFlag
+	flags.Var(&staleDays, "stale-days", "days before a Candidate is Stale, for this run")
+	all := flags.Bool("all", false, "pick every Candidate, whatever its age")
 	given, err := parseInterspersed(flags, args)
 	if err != nil {
 		return misused
 	}
 	if !*dry {
-		return actOnPlan(*planPath, pick, given, stdout, stderr)
+		if *planPath == "" || len(pick) > 0 || len(kind) > 0 || len(ecosystem) > 0 || *all || staleDays.set || len(given) > 0 {
+			writeCleanUsage(stderr)
+			return misused
+		}
+		return actOnPlan(*planPath, stdout, stderr)
 	}
-	result, ignore, err := scanTree(given)
+	kinds, err := kindsOf(kind)
+	if err != nil {
+		say(stderr, err)
+		return misused
+	}
+	names, err := ecosystemsOf(ecosystem)
+	if err != nil {
+		say(stderr, err)
+		return misused
+	}
+	var staleAfter *time.Duration
+	if staleDays.set {
+		staleAfter = &staleDays.after
+	}
+	result, ignore, err := scanTree(given, staleAfter)
 	if err != nil {
 		say(stderr, err)
 		return misused
@@ -137,7 +162,13 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	}
 
 	disk := files.Disk{}
-	built, choices, err := plan.Build(disk, result, named)
+	built, choices, err := plan.Build(disk, result, plan.Pick{
+		Named:      named,
+		Kinds:      kinds,
+		Ecosystems: names,
+		AnyAge:     *all,
+		StaleNamed: staleDays.set,
+	})
 	if err != nil {
 		var unknown plan.UnknownPath
 		say(stderr, err)
@@ -198,12 +229,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 // actOnPlan carries out the Plan at planPath. It removes nothing until the
 // Plan has been read and the trash can take a Candidate. A Candidate the
 // trash cannot take stays where it was.
-func actOnPlan(planPath string, pick repeated, given []string, stdout, stderr io.Writer) int {
-	if planPath == "" || len(pick) > 0 || len(given) > 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: sweep clean --dry-run [--plan file] [--pick path] [Root...]")
-		_, _ = fmt.Fprintln(stderr, "       sweep clean --plan file")
-		return misused
-	}
+func actOnPlan(planPath string, stdout, stderr io.Writer) int {
 	data, err := os.ReadFile(planPath)
 	if err != nil {
 		say(stderr, err)
@@ -504,6 +530,73 @@ func say(stderr io.Writer, err error) {
 	_, _ = fmt.Fprintln(stderr, "sweep:", strings.ReplaceAll(err.Error(), "\n", "\nsweep: "))
 }
 
+const (
+	cleanDryUsage = "sweep clean --dry-run [--plan file] [--pick path] [--kind Kind] [--ecosystem Name] [--stale-days n] [--all] [Root...]"
+	cleanActUsage = "sweep clean --plan file"
+)
+
+func writeCleanUsage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "usage: "+cleanDryUsage)
+	_, _ = fmt.Fprintln(w, "       "+cleanActUsage)
+}
+
+type daysFlag struct {
+	set   bool
+	after time.Duration
+}
+
+func (d *daysFlag) String() string {
+	if !d.set {
+		return ""
+	}
+	return strconv.Itoa(int(d.after / (24 * time.Hour)))
+}
+
+func (d *daysFlag) Set(s string) error {
+	n, err := strconv.ParseInt(s, 10, 0)
+	if err != nil || n < 0 {
+		return fmt.Errorf("%s is not a whole number of days", s)
+	}
+	days := time.Duration(n) * 24 * time.Hour
+	if n > 0 && days/(24*time.Hour) != time.Duration(n) {
+		return fmt.Errorf("%d is too large", n)
+	}
+	d.set = true
+	d.after = days
+	return nil
+}
+
+func kindsOf(names []string) ([]domain.Kind, error) {
+	var out []domain.Kind
+	var errs []error
+	for _, name := range names {
+		k, ok := domain.KindByName(name)
+		if !ok {
+			errs = append(errs, fmt.Errorf("unknown Kind %q", name))
+			continue
+		}
+		out = append(out, k)
+	}
+	return out, errors.Join(errs...)
+}
+
+func ecosystemsOf(names []string) ([]string, error) {
+	known := map[string]bool{}
+	for _, e := range ecosystems.All() {
+		known[e.Name] = true
+	}
+	var out []string
+	var errs []error
+	for _, name := range names {
+		if !known[name] {
+			errs = append(errs, fmt.Errorf("unknown Ecosystem %q", name))
+			continue
+		}
+		out = append(out, name)
+	}
+	return out, errors.Join(errs...)
+}
+
 type repeated []string
 
 func (r *repeated) String() string { return strings.Join(*r, ",") }
@@ -513,12 +606,13 @@ func (r *repeated) Set(s string) error {
 	return nil
 }
 
-// scanTree reads the Configuration and scans. The Roots are given when it
-// names any. Otherwise they are the Configuration's Roots, or the current
-// directory when the Configuration names none. The Stale threshold and the
-// Ignore list come from the Configuration. The Result names the file that
-// was read.
-func scanTree(given []string) (scan.Result, []string, error) {
+// scanTree reads the Configuration and scans. The Roots are given when the
+// command names any. Otherwise they are the Configuration's Roots, or the
+// current directory when the Configuration names none. The Stale threshold
+// and the Ignore list come from the Configuration, unless staleAfter is
+// set, which is the threshold for this run. The Result names the file
+// that was read.
+func scanTree(given []string, staleAfter *time.Duration) (scan.Result, []string, error) {
 	cfg, err := configuration()
 	if err != nil {
 		return scan.Result{}, nil, err
@@ -534,8 +628,12 @@ func scanTree(given []string) (scan.Result, []string, error) {
 	if err != nil {
 		return scan.Result{}, nil, err
 	}
+	after := cfg.StaleAfter
+	if staleAfter != nil {
+		after = *staleAfter
+	}
 	result := scan.Scan(files.Disk{}, git.Local{}, docker.Local{}, roots, ecosystems.All(), time.Now(), scan.Settings{
-		StaleAfter: cfg.StaleAfter,
+		StaleAfter: after,
 		Ignore:     ignore,
 	})
 	result.Configuration = cfg.Path

@@ -62,18 +62,32 @@ beneath a Root could not be read or the output could not be written, and 2
 when the command line is wrong or a Root is not a directory, in which case
 nothing is scanned.
 
-    sweep clean --dry-run [--plan file] [--pick path] [Root...]
+    sweep clean --dry-run [--plan file] [--pick path] [--kind Kind] [--ecosystem Name] [--stale-days n] [--all] [Root...]
 
 `sweep clean --dry-run` reads the same configuration file a Scan reads.
 Roots come from the command line first, then the file, then the current
-directory. The file's Stale threshold decides what is Stale. A path on the
-Ignore list, and everything beneath it, is left out, so a Plan never holds
-one. A Candidate that holds an Ignore path is left out for the same
-reason. `--pick` of such a path is refused, and the message names the path.
-It prints the configuration file it read, or `none`, and the Roots it used.
-It picks every Stale Candidate and writes a Plan. It prints each Candidate
-as `picked: Stale` or `not picked: used recently`, with its Size, Kind and
-path. The Plan is a JSON file with a `version` field. It records the
+directory. The file's Stale threshold decides what is Stale, unless
+`--stale-days` is set. A path on the Ignore list, and everything beneath
+it, is left out, so a Plan never holds one. A Candidate that holds an
+Ignore path is left out for the same reason. `--pick` of such a path is
+refused, and the message names the path. It prints the configuration file
+it read, or `none`, and the Roots it used. It picks every Stale Candidate
+and writes a Plan. `--kind` keeps only the named Kinds, and `--ecosystem`
+keeps only the named Ecosystems. Each may be repeated. A Kind is
+Dependencies, Build output, Cache, Models or Worktree. An Ecosystem is
+one sweep knows, such as Node or Cargo. An unknown name is a usage error.
+`--stale-days` is a whole number of days and replaces the threshold for
+this run, including one from the configuration file. Zero means a
+Candidate is Stale when its Last used is before now. `--all` picks every
+Candidate whatever its age. None of `--kind`, `--ecosystem`,
+`--stale-days` or `--all` picks a Shared cache or Docker data. A Shared
+cache is picked only when `--pick` names it. `--pick` adds that Candidate
+even when a narrowing flag would leave it out. Each row is `picked` or
+`not picked` with the reason that decided it: `Stale`, `used recently`,
+`named with --pick`, `--all`, `older than --stale-days n`,
+`newer than --stale-days n`, `not named with --kind`,
+`not named with --ecosystem` or `Shared cache`, and with its Size, Kind
+and path. The Plan is a JSON file with a `version` field. It records the
 Roots and each picked Candidate with its Fingerprint: the file identity
 of the Candidate, the number of directory entries inside it, its Size and
 its newest modification. A Link counts as one entry and is not followed.
@@ -84,17 +98,18 @@ prints that full path. `--plan` names another file. The Plan is never
 written inside a Candidate, an Ignore path, or a Project the Scan found.
 That refusal happens before anything is written. A file that already
 exists is replaced only when it is an earlier Plan. Any other existing
-file is left as it was, and the dry run writes nothing. `--pick` adds one
-Candidate the default Pick left out. Nothing is removed. The run ends with
-how many Candidates and how much Size are in the Plan, what was left out,
-and how to add it with `--pick`.
+file is left as it was, and the dry run writes nothing. Nothing is
+removed. The run ends with how many Candidates and how much Size are in
+the Plan, what was left out, and how to add one with `--pick`.
 
 The exit status is 0 when the Plan is written and the dry run read
 everything, 1 when something could not be read or the Plan or the output
 could not be written, and 2 when the command line is wrong, a Root is not
 a directory, the configuration file is rejected, a `--pick` path is not a
-Candidate (including one on the Ignore list), or the Plan would be written
-inside a Candidate, an Ignore path, or a Project. A usage error writes no Plan.
+Candidate (including one on the Ignore list), a Kind or an Ecosystem is
+not one sweep knows, `--stale-days` is not a whole number of days, or the
+Plan would be written inside a Candidate, an Ignore path, or a Project.
+A usage error writes no Plan.
 
     sweep clean --plan file
 

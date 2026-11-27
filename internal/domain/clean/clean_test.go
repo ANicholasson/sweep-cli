@@ -63,7 +63,7 @@ func planned(t *testing.T) (*sweeptest.Files, plan.Plan) {
 		"other/node_modules/a.js":   sweeptest.File{Bytes: 20},
 	})
 	found := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top}, ecosystems.All(), time.Now(), scan.Settings{})
-	built, _, err := plan.Build(files, found, nil)
+	built, _, err := plan.Build(files, found, plan.Pick{})
 	if err != nil {
 		t.Fatal(err)
 	}

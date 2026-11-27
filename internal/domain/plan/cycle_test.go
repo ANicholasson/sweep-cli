@@ -26,7 +26,7 @@ func TestADirectoryCycleDoesNotHangTheFingerprint(t *testing.T) {
 		t.Fatalf("%d Candidates, want the one directory", len(found.Candidates))
 	}
 
-	built, _, err := plan.Build(files, found, nil)
+	built, _, err := plan.Build(files, found, plan.Pick{})
 	if err != nil {
 		t.Fatal(err)
 	}
