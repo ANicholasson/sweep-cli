@@ -4,7 +4,6 @@ import (
 	"errors"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
@@ -130,28 +129,6 @@ func TestSharedCachesOffLooksOnlyBeneathTheGivenRoots(t *testing.T) {
 	}
 }
 
-func TestASplitSharedCacheListsEachEntry(t *testing.T) {
-	where := domain.InSharedCache{Linux: "models", MacOS: "models", Windows: "models", Split: true}
-	files := sweeptest.NewFiles(sweeptest.Tree{
-		"home/models/one/weight":                  sweeptest.File{Bytes: 4},
-		"home/models/one/pkg/package.json":        sweeptest.File{Bytes: 1},
-		"home/models/one/pkg/node_modules/a/x.js": sweeptest.File{Bytes: 1},
-		"home/models/two/weight":                  sweeptest.File{Bytes: 4},
-	})
-	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/home"}, []domain.Ecosystem{cacheEcosystem(where), web}, scanNow, scan.Settings{
-		Home:         sweeptest.Top + "/home",
-		SharedCaches: true,
-	})
-	if len(got.Candidates) != 2 {
-		t.Fatalf("candidates = %+v, want the two entries and not the cache or the Project inside one", got.Candidates)
-	}
-	for _, c := range got.Candidates {
-		if c.Rule.Kind != domain.Cache || c.Project != "" {
-			t.Errorf("candidate = %+v, want a Cache with no Project", c)
-		}
-	}
-}
-
 func TestAMissingSharedCacheIsNotAdded(t *testing.T) {
 	files := sweeptest.NewFiles(sweeptest.Tree{"home/note": sweeptest.File{Bytes: 1}})
 	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/home"}, []domain.Ecosystem{cacheEcosystem(cacheWhere())}, scanNow, scan.Settings{
@@ -236,57 +213,6 @@ func TestAnIgnoredUnreadableCacheParentIsNotReported(t *testing.T) {
 	}
 	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/app/node_modules" {
 		t.Errorf("candidates = %+v, want the Project Candidate only", got.Candidates)
-	}
-}
-
-func TestAFileInASplitCacheIsMeasuredAsAFile(t *testing.T) {
-	when := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
-	where := domain.InSharedCache{Linux: "models", MacOS: "models", Windows: "models", Split: true}
-	files := sweeptest.NewFiles(sweeptest.Tree{
-		"home/models/weight.bin": sweeptest.File{Bytes: 100, Modified: when},
-		"home/models/keep/note":  sweeptest.File{Bytes: 4, Modified: when},
-	})
-	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/home"}, []domain.Ecosystem{cacheEcosystem(where)}, scanNow, scan.Settings{
-		StaleAfter:   domain.StaleAfter,
-		Home:         sweeptest.Top + "/home",
-		SharedCaches: true,
-	})
-	if len(got.Unreadable) != 0 {
-		t.Fatalf("unreadable = %+v, want none", got.Unreadable)
-	}
-	var file, dir *domain.Candidate
-	for i := range got.Candidates {
-		c := &got.Candidates[i]
-		switch c.Path {
-		case sweeptest.Top + "/home/models/weight.bin":
-			file = c
-		case sweeptest.Top + "/home/models/keep":
-			dir = c
-		default:
-			t.Errorf("unexpected Candidate %s", c.Path)
-		}
-	}
-	if file == nil || file.Size != 512 || !file.LastUsed.Equal(when) {
-		t.Fatalf("file = %+v, want Size 512 and Last used %s", file, when)
-	}
-	if dir == nil {
-		t.Fatal("the directory entry is not a Candidate")
-	}
-}
-
-func TestAnIgnoredEntryOfASplitCacheIsLeftOut(t *testing.T) {
-	where := domain.InSharedCache{Linux: "models", MacOS: "models", Windows: "models", Split: true}
-	files := sweeptest.NewFiles(sweeptest.Tree{
-		"home/models/secret.bin": sweeptest.File{Bytes: 8},
-		"home/models/keep.bin":   sweeptest.File{Bytes: 8},
-	})
-	got := scan.Scan(files, sweeptest.Git{}, sweeptest.Docker{}, []domain.Root{sweeptest.Top + "/home"}, []domain.Ecosystem{cacheEcosystem(where)}, scanNow, scan.Settings{
-		Home:         sweeptest.Top + "/home",
-		SharedCaches: true,
-		Ignore:       []string{sweeptest.Top + "/home/models/secret.bin"},
-	})
-	if len(got.Candidates) != 1 || got.Candidates[0].Path != sweeptest.Top+"/home/models/keep.bin" {
-		t.Errorf("candidates = %+v, want only keep.bin", got.Candidates)
 	}
 }
 
