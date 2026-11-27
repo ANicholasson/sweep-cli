@@ -39,7 +39,7 @@ func TestASharedCacheIsPickedOnlyWhenNamed(t *testing.T) {
 		if paths := pickedPaths(built); len(paths) != 1 || paths[0] != project.Path {
 			t.Fatalf("picked = %v, want only the Cache that is not a Shared cache", paths)
 		}
-		if reason, picked := choiceFor(t, choices, cache.Path); picked || reason != "Shared cache" {
+		if reason, picked := choiceFor(t, choices, cache.Path); picked || reason != "choose it yourself" {
 			t.Errorf("Shared cache picked = %v, reason = %q, want left out as a Shared cache", picked, reason)
 		}
 		if reason, picked := choiceFor(t, choices, deps.Path); picked || reason != "not named with --kind" {
@@ -55,7 +55,7 @@ func TestASharedCacheIsPickedOnlyWhenNamed(t *testing.T) {
 		if paths := pickedPaths(built); len(paths) != 2 {
 			t.Fatalf("picked = %v, want the two Candidates that are not a Shared cache", paths)
 		}
-		if reason, picked := choiceFor(t, choices, cache.Path); picked || reason != "Shared cache" {
+		if reason, picked := choiceFor(t, choices, cache.Path); picked || reason != "choose it yourself" {
 			t.Errorf("Shared cache picked = %v, reason = %q", picked, reason)
 		}
 	})

@@ -89,6 +89,9 @@ func TestScanOffersNoFlagForDockerData(t *testing.T) {
 
 func TestScanFailsWhenStdoutCannotBeWritten(t *testing.T) {
 	var stderr strings.Builder
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	status := run([]string{"scan", t.TempDir()}, failingWriter{}, &stderr)
 

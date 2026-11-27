@@ -15,7 +15,7 @@ func TestAMissingFileIsTheDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Path != "" || got.StaleAfter != domain.StaleAfter || len(got.Roots) != 0 || len(got.Ignore) != 0 {
+	if got.Path != "" || got.StaleAfter != domain.StaleAfter || len(got.Roots) != 0 || len(got.Ignore) != 0 || !got.SharedCaches {
 		t.Errorf("got %+v, want the defaults and no file", got)
 	}
 }
@@ -27,7 +27,7 @@ func TestAnEmptyFileNamesItselfAndKeepsTheDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Path != path || got.StaleAfter != domain.StaleAfter || len(got.Roots) != 0 || len(got.Ignore) != 0 {
+	if got.Path != path || got.StaleAfter != domain.StaleAfter || len(got.Roots) != 0 || len(got.Ignore) != 0 || !got.SharedCaches {
 		t.Errorf("got %+v, want %s and the defaults", got, path)
 	}
 }
@@ -98,6 +98,7 @@ func TestABadFileNamesTheKey(t *testing.T) {
 		"empty":      "ignore = ['']\n",
 		"not a list": "roots = '/tmp'\n",
 		"unknown":    "colour = 'blue'\n",
+		"switch":     "shared_caches = 'no'\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -116,6 +117,9 @@ func TestABadFileNamesTheKey(t *testing.T) {
 				if strings.Contains(body, "ignore") {
 					key = "ignore"
 				}
+				if strings.Contains(body, "shared_caches") {
+					key = "shared_caches"
+				}
 				if name == "unknown" {
 					key = "colour"
 				}
@@ -124,6 +128,26 @@ func TestABadFileNamesTheKey(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSharedCachesStaysOnUntilTheFileTurnsItOff(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "shared_caches = false\n")
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SharedCaches {
+		t.Errorf("SharedCaches = true, want false")
+	}
+	write(t, dir, "shared_caches = true\n")
+	got, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.SharedCaches {
+		t.Errorf("SharedCaches = false, want true")
 	}
 }
 

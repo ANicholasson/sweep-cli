@@ -13,7 +13,7 @@ Read `GLOSSARY.md` first and use its words (Root, Candidate, Size, Kind, Reason,
 
 - Point sweep at the Fixture of your own run, or at the run's `scratch/`, and nowhere else. A Clean (not built yet) runs against the Fixture only, never a real directory.
 - The Fixture is made only by the fixture tool, which `launch` runs. Never add, edit or delete a path in it by hand; a recipe that needs more state builds it in `$RUN/scratch/`, and a Candidate that should be covered for good goes into `tools/fixture/fixture.go` and the Answer key in a pull request.
-- Read the `Roots` of every Scan output. If any Root lies outside `$RUN`, stop and report it: ADR-0002 says a Scan will add Shared cache Roots in the home directory, and from then on runs must point the home directory into the Fixture.
+- Read the `Roots` of every Scan output. If any Root lies outside `$RUN`, stop and report it. The helper points `HOME` and `USERPROFILE` at `$RUN/scratch/home`, a copy of the Fixture's home, unless the caller already pointed that variable at a path inside the run. A Scan then adds Shared cache Roots inside the run, a Plan is not written into the Fixture, and a macOS Clean can still point `HOME` at its trash directory.
 - Evidence holds absolute paths under the run directory. Before pasting it into a pull request, replace the run directory with `$RUN` so no machine path lands in the public repo.
 
 ## Launch

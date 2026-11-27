@@ -28,8 +28,8 @@ printf '{}\n' > "$S/locked/package.json"
 chmod 0 "$S/locked"
 ```
 
-- **JSON.** Run `"$H" run "$RUN" scan-unreadable/json -- scan --json "$S"`. Exit status `1`. `unreadable` has one entry whose `path` is `$S/locked` and whose `error` says `permission denied`. `candidates` has one entry, `$S/open/node_modules`.
-- **Table.** Run `"$H" run "$RUN" scan-unreadable/table -- scan "$S"`. Exit status `1`. stdout has the row for `$S/open/node_modules`, then a blank line, one `Docker data` line, then a blank line, `Not read, so the list may be short and a Size may be low`, and `  $S/locked: open $S/locked: permission denied`.
+- **JSON.** Run `"$H" run "$RUN" scan-unreadable/json -- scan --json "$S"`. Exit status `1`. `unreadable` has one entry whose `path` is `$S/locked` and whose `error` says `permission denied`. `candidates` has `$S/open/node_modules` and the npm cache.
+- **Table.** Run `"$H" run "$RUN" scan-unreadable/table -- scan "$S"`. Exit status `1`. stdout has the row for `$S/open/node_modules`, then a blank line, the `Shared caches` heading, a header, the npm cache row, a blank line, one `Docker data` line, then a blank line, `Not read, so the list may be short and a Size may be low`, and `  $S/locked: list $S/locked: permission denied`.
 - **Fixture unchanged.** Both steps' `fixture-changes.txt` are empty.
 
 ## Gotchas

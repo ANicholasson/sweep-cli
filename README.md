@@ -8,14 +8,19 @@ Status: early development.
 
 ## Usage
 
-    sweep scan [--json] [Root...]
+    sweep scan [--json] [--no-shared-caches] [Root...]
 
 A Scan looks beneath each Root. Roots come from the command line first,
-then the configuration file, then the current directory. It lists every
+then the configuration file, then the current directory. It also adds
+each known Shared cache as a Root of its own, inside the home directory,
+unless the shared-caches setting is off or `--no-shared-caches` is given.
+A location outside the home directory is never added. Added Roots are
+marked `added by sweep`. It lists every
 Candidate a Rule recognises, such as a `node_modules` beside a
 `package.json`, with its Size, Kind, path and Reason. A Root that is a
 Link is resolved once, and a Link beneath a Root is not followed. It
-groups Candidates by Project. Last used is the newest modification among
+groups Candidates by Project. Shared caches are listed in their own
+group, apart from the Candidates beneath the Roots the user gave. Last used is the newest modification among
 that Project's own files, outside its Candidates, and never an access
 time. A Candidate last used more than 30 days ago is marked Stale, unless
 the configuration file sets another threshold. A Candidate with no Project
@@ -26,9 +31,10 @@ that holds nothing git tracks. It leaves out a path on the Ignore list,
 and everything beneath it, from the report. Last used still counts the
 files there, so an Ignore does not by itself make a Candidate Stale. It prints the configuration file it read, or
 `none`, and the Roots it used, and it changes nothing. `--json` prints the
-same as one JSON document with a `version` field and a `configuration`
-field, and each Candidate carries its Project's path, `last_used` and
-`stale`. A Size is in bytes in the JSON, and it is what `du -s` reports
+same as one JSON document with a `version` field, a `configuration`
+field and an `added` list of the Roots sweep added. Those paths are also
+in `roots`. Each Candidate carries its Project's path, `last_used` and
+`stale`. A Shared cache has an empty `project`. A Size is in bytes in the JSON, and it is what `du -s` reports
 for the path, with each hard-linked file counted once.
 
 The configuration file is `config.toml` in the `sweep` directory of the
@@ -40,11 +46,17 @@ TOML and the only keys are these:
     roots = ["/path/to/projects"]
     stale_days = 30
     ignore = ["/path/to/keep"]
+    shared_caches = true
 
 `roots` and `ignore` are absolute paths. A Link in an Ignore path is
 followed, including one earlier than the last component. `stale_days` is a whole number of
 days and replaces the 30-day threshold, and zero means a Candidate is
-Stale when its Last used is before now. A malformed file is an error that
+Stale when its Last used is before now. `shared_caches` is the
+shared-caches setting. It is on when the key is absent. On, a Scan adds
+each known Shared cache, starting with the npm cache, as a Root inside
+the home directory and lists it in its own group. Off, a Scan looks only
+beneath the Roots the user gave. `--no-shared-caches` turns it off for
+one run. A malformed file is an error that
 names the file. An unknown key or a bad value is an error that names the
 key, and nothing is scanned. No key can switch off a Safety rule or make
 Delete the default.
@@ -62,7 +74,7 @@ beneath a Root could not be read or the output could not be written, and 2
 when the command line is wrong or a Root is not a directory, in which case
 nothing is scanned.
 
-    sweep clean --dry-run [--plan file] [--pick path] [--kind Kind] [--ecosystem Name] [--stale-days n] [--all] [Root...]
+    sweep clean --dry-run [--plan file] [--pick path] [--pick-caches Ecosystem] [--kind Kind] [--ecosystem Name] [--stale-days n] [--all] [--no-shared-caches] [Root...]
 
 `sweep clean --dry-run` reads the same configuration file a Scan reads.
 Roots come from the command line first, then the file, then the current
@@ -71,24 +83,26 @@ directory. The file's Stale threshold decides what is Stale, unless
 it, is left out, so a Plan never holds one. A Candidate that holds an
 Ignore path is left out for the same reason. `--pick` of such a path is
 refused, and the message names the path. It prints the configuration file
-it read, or `none`, and the Roots it used. It picks every Stale Candidate
-and writes a Plan. `--kind` keeps only the named Kinds, and `--ecosystem`
-keeps only the named Ecosystems. Each may be repeated. A Kind is
-Dependencies, Build output, Cache, Models or Worktree. An Ecosystem is
-one sweep knows, such as Node or Cargo. An unknown name is a usage error.
-`--stale-days` is a whole number of days and replaces the threshold for
-this run, including one from the configuration file. Zero means a
-Candidate is Stale when its Last used is before now. `--all` picks every
-Candidate whatever its age. None of `--kind`, `--ecosystem`,
-`--stale-days` or `--all` picks a Shared cache or Docker data. A Shared
-cache is picked only when `--pick` names it. `--pick` adds that Candidate
-even when a narrowing flag would leave it out. Each row is `picked` or
-`not picked` with the reason that decided it: `Stale`, `used recently`,
-`named with --pick`, `--all`, `older than --stale-days n`,
-`newer than --stale-days n`, `not named with --kind`,
-`not named with --ecosystem` or `Shared cache`, and with its Size, Kind
-and path. The Plan is a JSON file with a `version` field. It records the
-Roots and each picked Candidate with its Fingerprint: the file identity
+it read, or `none`, and the Roots it used, marking a Root sweep added. It
+picks every Stale Candidate beneath the Roots the user gave and writes a
+Plan. `--kind` keeps only the named Kinds, and `--ecosystem` keeps only
+the named Ecosystems. Each may be repeated. A Kind is Dependencies, Build
+output, Cache, Models or Worktree. An Ecosystem is one sweep knows, such
+as Node or Cargo. An unknown name is a usage error. `--stale-days` is a
+whole number of days and replaces the threshold for this run, including
+one from the configuration file. Zero means a Candidate is Stale when its
+Last used is before now. `--all` picks every Candidate whatever its age.
+None of `--kind`, `--ecosystem`, `--stale-days` or `--all` picks a Shared
+cache or Docker data. A Shared cache is `not picked: choose it yourself`
+until `--pick` names it or `--pick-caches` names its Ecosystem. `--pick`
+adds that Candidate even when a narrowing flag would leave it out. Each
+row is `picked` or `not picked` with the reason that decided it: `Stale`,
+`used recently`, `named with --pick`, `named with --pick-caches`, `--all`,
+`older than --stale-days n`, `newer than --stale-days n`,
+`not named with --kind`, `not named with --ecosystem` or
+`choose it yourself`, and with its Size, Kind and path. The Plan is a
+JSON file with a `version` field. It records the Roots, including the ones
+sweep added, and each picked Candidate with its Fingerprint: the file identity
 of the Candidate, the number of directory entries inside it, its Size and
 its newest modification. A Link counts as one entry and is not followed.
 The default file is `sweep/plan.json` in the operating system's per-user
@@ -107,7 +121,8 @@ everything, 1 when something could not be read or the Plan or the output
 could not be written, and 2 when the command line is wrong, a Root is not
 a directory, the configuration file is rejected, a `--pick` path is not a
 Candidate (including one on the Ignore list), a Kind or an Ecosystem is
-not one sweep knows, `--stale-days` is not a whole number of days, or the
+not one sweep knows, `--pick-caches` names an Ecosystem with no Shared
+cache, `--stale-days` is not a whole number of days, or the
 Plan would be written inside a Candidate, an Ignore path, or a Project.
 A usage error writes no Plan.
 

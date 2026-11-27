@@ -36,6 +36,7 @@ var (
 //
 //	Roots
 //	  /work/projects
+//	  /home/ada/.npm/_cacache  added by sweep
 //
 //	/work/projects/web-app
 //	SIZE      KIND          PATH                                 LAST USED             STALE  REASON
@@ -47,7 +48,9 @@ var (
 //	  /work/projects/locked: open /work/projects/locked: permission denied
 //
 // With no Candidate the table is the line "No Candidates." A Candidate with
-// no Project is grouped under "(no Project)". Docker data is never a row of
+// no Project is grouped under "(no Project)". A Shared cache is grouped
+// under "Shared caches", apart from the Candidates beneath the Roots the
+// user gave. A Root sweep added is marked "added by sweep". Docker data is never a row of
 // that table. When it could not be read the line names why, such as
 // "Docker data  docker is not running", and it has no size. The last section
 // is there only when something was not read. With no configuration file the
@@ -77,11 +80,7 @@ func writeConfiguration(out *bytes.Buffer, path string) {
 
 func table(out *bytes.Buffer, result scan.Result) {
 	writeConfiguration(out, result.Configuration)
-	out.WriteString("Roots\n")
-	for _, root := range result.Roots {
-		fmt.Fprintf(out, "  %s\n", root)
-	}
-	out.WriteString("\n")
+	writeRoots(out, result.Roots, result.Added)
 	if len(result.Candidates) == 0 {
 		out.WriteString("No Candidates.\n")
 	} else {
@@ -104,6 +103,22 @@ func table(out *bytes.Buffer, result scan.Result) {
 	}
 	writeDocker(out, result.DockerData)
 	writeUnreadable(out, result.Unreadable)
+}
+
+func writeRoots(out *bytes.Buffer, roots, added []domain.Root) {
+	mark := map[domain.Root]bool{}
+	for _, root := range added {
+		mark[root] = true
+	}
+	out.WriteString("Roots\n")
+	for _, root := range roots {
+		if mark[root] {
+			fmt.Fprintf(out, "  %s  added by sweep\n", root)
+			continue
+		}
+		fmt.Fprintf(out, "  %s\n", root)
+	}
+	out.WriteString("\n")
 }
 
 func writeUnreadable(out *bytes.Buffer, unread []scan.Unreadable) {
@@ -135,12 +150,14 @@ func writeDocker(out *bytes.Buffer, data domain.DockerData) {
 // bytes. Kind is the Kind's name as GLOSSARY.md writes it. configuration
 // is the file that was read, or "" when there was none. project is the
 // Project's path, or "" when the Candidate has none. last_used is UTC.
-// stale is true when the Scan marked the Candidate Stale. dockerData is
+// stale is true when the Scan marked the Candidate Stale. added lists the
+// Roots sweep added, and those paths are also in roots. dockerData is
 // Docker data, never an entry of candidates.
 type scanV1 struct {
 	Version       int            `json:"version"`
 	Configuration string         `json:"configuration"`
 	Roots         []string       `json:"roots"`
+	Added         []string       `json:"added"`
 	Candidates    []candidateV1  `json:"candidates"`
 	Unreadable    []unreadableV1 `json:"unreadable"`
 	DockerData    dockerV1       `json:"dockerData"`
@@ -170,9 +187,12 @@ type unreadableV1 struct {
 }
 
 func toV1(result scan.Result) scanV1 {
-	out := scanV1{Version: 1, Configuration: result.Configuration, Roots: []string{}, Candidates: []candidateV1{}, Unreadable: []unreadableV1{}}
+	out := scanV1{Version: 1, Configuration: result.Configuration, Roots: []string{}, Added: []string{}, Candidates: []candidateV1{}, Unreadable: []unreadableV1{}}
 	for _, root := range result.Roots {
 		out.Roots = append(out.Roots, string(root))
+	}
+	for _, root := range result.Added {
+		out.Added = append(out.Added, string(root))
 	}
 	for _, c := range result.Candidates {
 		out.Candidates = append(out.Candidates, candidateV1{
@@ -202,13 +222,20 @@ type projectGroup struct {
 	candidates []domain.Candidate
 }
 
-// grouped keeps the Scan's order and puts Candidates of one Project together,
-// in the order the Scan first met that Project. A Candidate with no Project
-// stands in a group of its own, because its Last used is its own.
 func grouped(candidates []domain.Candidate) []projectGroup {
 	var out []projectGroup
 	index := map[string]int{}
+	shared := -1
 	for _, c := range candidates {
+		if _, ok := c.Rule.Where.(domain.InSharedCache); ok {
+			if shared < 0 {
+				out = append(out, projectGroup{heading: "Shared caches", candidates: []domain.Candidate{c}})
+				shared = len(out) - 1
+				continue
+			}
+			out[shared].candidates = append(out[shared].candidates, c)
+			continue
+		}
 		if c.Project == "" {
 			out = append(out, projectGroup{heading: "(no Project)", candidates: []domain.Candidate{c}})
 			continue

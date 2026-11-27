@@ -145,6 +145,13 @@ cmd_launch() {
 	(cd "$checkout" && go env GOEXE) > "$run/goexe"
 	(cd "$checkout" && go build -o "$(exe "$run" sweep)" ./cmd/sweep && go build -o "$(exe "$run" fixture)" ./tools/fixture)
 	"$(exe "$run" fixture)" "$run/fixture"
+	# The home directory a run uses is under scratch, not inside the
+	# Fixture. On macOS the default Plan is under HOME, and a dry run must
+	# not write that into the Fixture. The copy keeps the npm cache findable.
+	mkdir -p "$run/scratch/home"
+	if [ -d "$run/fixture/home" ]; then
+		cp -a "$run/fixture/home/." "$run/scratch/home/"
+	fi
 	checkout_state "$checkout" > "$run/checkout-state"
 	listing "$run/fixture" > "$run/evidence/fixture-listing-built.txt"
 	cp "$run/fixture/answer-key.json" "$run/evidence/answer-key.json"
@@ -210,7 +217,19 @@ cmd_run() {
 	listing "$run/fixture" > "$out/fixture-before.txt"
 	touch "$out/.started"
 	set +e
-	(cd "$dir" && "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
+	# Default the home to the scratch copy, so a Scan finds the npm cache
+	# and a dry run's Plan stays out of the Fixture. A caller that already
+	# pointed HOME or USERPROFILE inside this run keeps it. That is how a
+	# macOS Clean puts the trash under the Fixture instead of the scratch copy.
+	home="$run/scratch/home"
+	case ${HOME:-} in
+	"$run"/*) home=$HOME ;;
+	esac
+	profile="$run/scratch/home"
+	case ${USERPROFILE:-} in
+	"$run"/*) profile=$USERPROFILE ;;
+	esac
+	(cd "$dir" && HOME="$home" USERPROFILE="$profile" "$(exe "$run" sweep)" "$@") > "$out/stdout" 2> "$out/stderr"
 	status=$?
 	set -e
 	printf '%s\n' "$status" > "$out/status"

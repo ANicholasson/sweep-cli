@@ -12,6 +12,16 @@ import (
 func TestPickByKindEcosystemAndAge(t *testing.T) {
 	b := build(t)
 	dir, key := b.buildFixture(t)
+	// The npm cache is a Shared cache. These flags do not pick one, and this
+	// dry run's home directory is not the Fixture's home, so it is not listed.
+	var projects []struct{ Path, Kind string }
+	for _, c := range key.Candidates {
+		if strings.HasPrefix(filepath.ToSlash(c.Path), "home/") {
+			continue
+		}
+		projects = append(projects, c)
+	}
+	key.Candidates = projects
 	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
 	root := at(key.Root)
 	before := listing(t, dir)

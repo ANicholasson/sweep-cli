@@ -24,6 +24,7 @@ type scanJSON struct {
 	Version       int      `json:"version"`
 	Configuration string   `json:"configuration"`
 	Roots         []string `json:"roots"`
+	Added         []string `json:"added"`
 	Candidates    []struct {
 		Path      string    `json:"path"`
 		Size      int64     `json:"size"`
@@ -62,10 +63,12 @@ func TestScanOfTheFixture(t *testing.T) {
 	b := build(t)
 	dir, key := b.buildFixture(t)
 	b.config = filepath.Join(dir, "config")
+	b.home = filepath.Join(dir, "home")
 	if err := os.MkdirAll(b.config, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
+	cache := cacheCandidate(t, dir, key)
 	root := at(key.Root)
 	before := listing(t, dir)
 	t.Cleanup(func() {
@@ -197,7 +200,7 @@ func TestScanOfTheFixture(t *testing.T) {
 				{root, candidate},
 			} {
 				out := scan(t, dir, roots...)
-				rootsAre(t, out, roots)
+				rootsAre(t, out, withCache(t, roots, cache))
 				for _, want := range key.Candidates {
 					if n := listed(out, at(want.Path)); n != 1 {
 						t.Errorf("Roots %v: %s is listed %d times, want once", roots, want.Path, n)
@@ -210,7 +213,7 @@ func TestScanOfTheFixture(t *testing.T) {
 
 	t.Run("with no Root the current directory is the Root", func(t *testing.T) {
 		out := scan(t, root)
-		rootsAre(t, out, []string{root})
+		rootsAre(t, out, withCache(t, []string{root}, cache))
 		for _, want := range key.Candidates {
 			if listed(out, at(want.Path)) != 1 {
 				t.Errorf("%s is not listed once", want.Path)
@@ -223,7 +226,7 @@ func TestScanOfTheFixture(t *testing.T) {
 		if got.status != 0 {
 			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
 		}
-		rootsAre(t, decode(t, got), []string{root})
+		rootsAre(t, decode(t, got), withCache(t, []string{root}, cache))
 	})
 
 	t.Run("the table names the Roots, and each Candidate with its Size, Kind and Reason", func(t *testing.T) {
@@ -233,8 +236,11 @@ func TestScanOfTheFixture(t *testing.T) {
 			t.Fatalf("sweep scan: exit status %d, stderr %q", got.status, got.stderr)
 		}
 		roots, rows := readTable(t, got.stdout)
-		if len(roots) != 1 || !sameDir(t, roots[0], root) {
-			t.Errorf("the table names Roots %v, want %s", roots, root)
+		if len(roots) != 2 || !sameDir(t, roots[0], root) || !sameDir(t, roots[1], cache) {
+			t.Errorf("the table names Roots %v, want %s and %s", roots, root, cache)
+		}
+		if !strings.Contains(got.stdout, cache+"  added by sweep") {
+			t.Errorf("the table does not mark %s as added by sweep\n%s", cache, got.stdout)
 		}
 		if len(rows) != len(out.Candidates) {
 			t.Errorf("the table has %d rows and the JSON %d Candidates", len(rows), len(out.Candidates))
@@ -263,6 +269,22 @@ func TestScanOfTheFixture(t *testing.T) {
 			t.Fatalf("sweep scan: exit status %d, stderr %q", table.status, table.stderr)
 		}
 		for _, c := range out.Candidates {
+			if c.Project == "" {
+				if c.Kind != domain.Cache.String() || !sameDir(t, c.Path, cache) {
+					t.Errorf("%s: Project is empty, want only the Shared cache", c.Path)
+				}
+				used := newestInside(t, c.Path)
+				if !c.LastUsed.Equal(used) {
+					t.Errorf("%s: Last used = %s, and the newest file inside it is %s", c.Path, c.LastUsed, used)
+				}
+				if !c.Stale {
+					t.Errorf("%s: Stale = false, and its files are older than 30 days", c.Path)
+				}
+				if !strings.Contains(table.stdout, "\nShared caches\n") {
+					t.Errorf("the table does not group %s under Shared caches\n%s", c.Path, table.stdout)
+				}
+				continue
+			}
 			project := filepath.Dir(c.Path)
 			if !manifestBeside(project, c.Path) {
 				t.Errorf("%s: Project %s holds no Manifest for that Candidate", c.Path, c.Project)
@@ -301,7 +323,7 @@ func TestScanOfTheFixture(t *testing.T) {
 	})
 
 	t.Run("a Scan that finds nothing writes empty lists, not null", func(t *testing.T) {
-		got := b.run(t, dir, "scan", "--json", t.TempDir())
+		got := b.run(t, dir, "scan", "--json", "--no-shared-caches", t.TempDir())
 		if got.status != 0 {
 			t.Fatalf("exit status %d, stderr %q", got.status, got.stderr)
 		}
@@ -309,7 +331,7 @@ func TestScanOfTheFixture(t *testing.T) {
 		if err := json.Unmarshal([]byte(got.stdout), &fields); err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range []string{"candidates", "unreadable"} {
+		for _, name := range []string{"candidates", "unreadable", "added"} {
 			if string(fields[name]) != "[]" {
 				t.Errorf("%s = %s, want []", name, fields[name])
 			}
@@ -725,7 +747,8 @@ func readTable(t *testing.T, out string) ([]string, []row) {
 		if l == "" {
 			break
 		}
-		roots = append(roots, strings.TrimSpace(l))
+		line := strings.TrimSuffix(strings.TrimSpace(l), "added by sweep")
+		roots = append(roots, strings.TrimSpace(line))
 	}
 	units := map[string]float64{"B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40}
 	var rows []row
@@ -759,6 +782,53 @@ func readTable(t *testing.T, out string) ([]string, []row) {
 		rows = append(rows, row{cells, value * units[unit], within, cells[1], cells[2], reason, stale})
 	}
 	return roots, rows
+}
+
+func cacheCandidate(t *testing.T, dir string, key answerKey) string {
+	t.Helper()
+	for _, c := range key.Candidates {
+		if c.Kind == domain.Cache.String() {
+			return filepath.Join(dir, filepath.FromSlash(c.Path))
+		}
+	}
+	t.Fatal("the Answer key has no Cache")
+	return ""
+}
+
+func withCache(t *testing.T, roots []string, cache string) []string {
+	t.Helper()
+	for _, root := range roots {
+		if sameDir(t, root, cache) {
+			return roots
+		}
+	}
+	out := append([]string{}, roots...)
+	return append(out, cache)
+}
+
+func newestInside(t *testing.T, path string) time.Time {
+	t.Helper()
+	var newest time.Time
+	err := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newest.IsZero() {
+		t.Fatalf("%s has no file", path)
+	}
+	return newest
 }
 
 func manifestBeside(project, candidate string) bool {

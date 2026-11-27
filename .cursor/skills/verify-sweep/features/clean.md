@@ -38,7 +38,7 @@ Preconditions:
 
 ## Gotchas
 
-- On Linux the trash follows `XDG_DATA_HOME`. On Windows the private trash does too, and the configuration follows `AppData`, not `XDG_CONFIG_HOME`. On macOS both follow `HOME` and the directory is `.Trash`. Leave the trash unset and the Clean writes to the machine's trash: `$HOME/.local/share/Trash` on Linux, `~/.Trash` on macOS, the Recycle Bin on Windows. Point Linux and Windows `XDG_DATA_HOME` at `$RUN/fixture/trash-home`, Windows `AppData` at `$RUN/scratch/config`, and macOS `HOME` at `$RUN/fixture/trash-home`.
+- On Linux the trash follows `XDG_DATA_HOME`. On Windows the private trash does too, and the configuration follows `AppData`, not `XDG_CONFIG_HOME`. On macOS both follow `HOME` and the directory is `.Trash`. The helper keeps a `HOME` already set inside the run, and otherwise points it at `$RUN/scratch/home`. Point Linux and Windows `XDG_DATA_HOME` at `$RUN/fixture/trash-home`, Windows `AppData` at `$RUN/scratch/config`, and macOS `HOME` at `$RUN/fixture/trash-home`. Leave the Linux or Windows data directory unset and the Clean writes to the machine's trash.
 - A Clean of the default Plan moves only `projects/stale-app/node_modules`. `projects/shifted-app/node_modules` is a Candidate and a Trap. It stays until a Plan includes it and it has not changed.
 - Changing a Candidate, or swapping a directory for a Link, changes the Fixture on purpose. The proof is that step's listing, not a later doctor, which then reports the Fixture changed.
 - A path the Windows Recycle Bin cannot take, including a long path or a path on a drive with no Recycle Bin, is a failure and stays in place. sweep does not delete it.

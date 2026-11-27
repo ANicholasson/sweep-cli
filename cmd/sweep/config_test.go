@@ -139,6 +139,9 @@ func TestConfiguration(t *testing.T) {
 			t.Errorf("recent-app is not listed, and it was not ignored")
 		}
 		for _, want := range key.Candidates {
+			if !strings.HasPrefix(want.Path, key.Root+"/") {
+				continue
+			}
 			path := filepath.Join(dir, filepath.FromSlash(want.Path))
 			if ignoredPath(t, path, hidden) {
 				continue

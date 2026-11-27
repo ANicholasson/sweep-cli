@@ -1,6 +1,6 @@
 # Configuration
 
-A per-user configuration file sets default Roots, the Stale threshold and the Ignore list. The file is `config.toml` in the `sweep` directory of the operating system's configuration directory. Roots come from the command line first, then the file, then the current directory. `stale_days` replaces the 30-day threshold. A path on the Ignore list, and everything beneath it, is never reported. A missing file means the defaults. A malformed file or an unknown key is an error, and nothing is scanned. The output names the file that was read, or `none`.
+A per-user configuration file sets default Roots, the Stale threshold, the Ignore list and the shared-caches setting. The file is `config.toml` in the `sweep` directory of the operating system's configuration directory. Roots come from the command line first, then the file, then the current directory. `stale_days` replaces the 30-day threshold. A path on the Ignore list, and everything beneath it, is never reported. A missing file means the defaults. A malformed file or an unknown key is an error, and nothing is scanned. The output names the file that was read, or `none`.
 
 ## Sub-features
 
@@ -27,9 +27,9 @@ Preconditions:
 - The configuration directory for these steps is `$RUN/scratch/config`, which is not the real per-user directory. On Linux, set `XDG_CONFIG_HOME` to that directory for the steps below. The file is `$RUN/scratch/config/sweep/config.toml`. Build it in `scratch`, never in the Fixture.
 - `$RUN/evidence/answer-key.json` names the Candidates. `projects/stale-app` was last used 60 days before the Fixture was built, and `projects/recent-app` one day before.
 
-- **Missing file.** With no file in the configuration directory, run `"$H" run "$RUN" scan-configuration/missing -C projects -- scan --json`. Exit status `0`. `configuration` is `""` and `roots` is `["$RUN/fixture/projects"]`.
-- **Roots from the file.** Write `roots = ['$RUN/fixture/projects']` into the file. From `$RUN/scratch`, run `"$H" run "$RUN" scan-configuration/roots -C "$RUN/scratch" -- scan --json`. Exit status `0`. `roots` is `["$RUN/fixture/projects"]` and `configuration` is the file's path. The table form, `"$H" run "$RUN" scan-configuration/roots-table -C "$RUN/scratch" -- scan`, contains a `Configuration` line with that path.
-- **Command line wins.** With the same file, run `"$H" run "$RUN" scan-configuration/cli -- scan --json projects/recent-app`. Exit status `0`. `roots` is `["$RUN/fixture/projects/recent-app"]`.
+- **Missing file.** With no file in the configuration directory, run `"$H" run "$RUN" scan-configuration/missing -C projects -- scan --json`. Exit status `0`. `configuration` is `""` and `roots` starts with `$RUN/fixture/projects` and then the npm cache path.
+- **Roots from the file.** Write `roots = ['$RUN/fixture/projects']` into the file. From `$RUN/scratch`, run `"$H" run "$RUN" scan-configuration/roots -C "$RUN/scratch" -- scan --json`. Exit status `0`. `roots` starts with `$RUN/fixture/projects` and then the npm cache path, and `configuration` is the file's path. The table form, `"$H" run "$RUN" scan-configuration/roots-table -C "$RUN/scratch" -- scan`, contains a `Configuration` line with that path and marks the cache `added by sweep`.
+- **Command line wins.** With the same file, run `"$H" run "$RUN" scan-configuration/cli -- scan --json projects/recent-app`. Exit status `0`. `roots` starts with `$RUN/fixture/projects/recent-app` and then the npm cache path.
 - **Threshold.** Write `roots` as above and `stale_days = 90`. Run `"$H" run "$RUN" scan-configuration/stale -C "$RUN/scratch" -- scan --json`. Exit status `0`. `projects/stale-app/node_modules` has `stale` false. Take its Last used from the modification time of a file in that Project outside `node_modules`, and check it is not 90 days before the Scan.
 - **Ignore.** Write `ignore` containing `$RUN/fixture/projects/web-app/node_modules` and `$RUN/fixture/projects/stale-app`, and the same `roots`. Run `"$H" run "$RUN" scan-configuration/ignore -- scan --json projects`. Exit status `0`. Those two Candidates are absent. `projects/recent-app/node_modules` is listed once.
 - **Ignore through a Link.** In `$RUN/scratch/link`, make `stale/plain` a Project with `node_modules`, and `plainlink` a Link to `stale/plain`. Write `ignore` as `$RUN/scratch/link/plainlink/node_modules`. Run `"$H" run "$RUN" scan-configuration/ignore-link -- scan --json "$RUN/scratch/link/stale/plain"`. Exit status `0` and the Candidate is absent. Run `"$H" run "$RUN" scan-configuration/ignore-link-root -- scan --json "$RUN/scratch/link/plainlink"`. Exit status `0` and the Candidate is absent.
@@ -39,7 +39,7 @@ Preconditions:
 
 ## Gotchas
 
-- The steps read the real configuration file unless the configuration directory is the scratch one named above. A Root outside `$RUN` means the real file was read. On macOS the directory is `HOME`, and the file is under `Library/Application Support/sweep`. On Windows it is `AppData`.
+- The steps read the real configuration file unless the configuration directory is the scratch one named above. A Root outside `$RUN` means the real file was read. The helper sets `HOME` to `$RUN/scratch/home`. On macOS the configuration file is under that home's `Library/Application Support/sweep`. On Windows `AppData` is still the configuration directory the step points at.
 - `stale_days` is a number of days. `90` makes the Fixture's 60-day Project not Stale. The default `30` would mark it Stale.
 - A Root on the command line replaces the file's Roots and does not turn Ignore off.
 - Paths in the file are absolute. A relative path is an error and nothing is scanned.
