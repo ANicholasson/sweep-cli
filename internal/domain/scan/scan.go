@@ -202,6 +202,13 @@ func (s *scanner) insideHome(home, location string) (string, error) {
 	if !cleanRelative(location) || s.ignored(home) {
 		return "", errNotAdded
 	}
+	// A home that is itself a Link is followed once. Listing it fails, and
+	// that failure is not a directory the Scan could not read. A Link in
+	// an ancestor is already followed by the files adapter.
+	home, err := s.followHome(home)
+	if err != nil {
+		return home, err
+	}
 	cur := home
 	for _, part := range strings.Split(location, "/") {
 		entries, err := s.files.List(cur)
@@ -225,6 +232,26 @@ func (s *scanner) insideHome(home, location string) (string, error) {
 		cur = next.Path
 	}
 	return cur, nil
+}
+
+// followHome is path when it can be listed, or the directory a Link at
+// path leads to. A missing path is errNotAdded. Any other failure is
+// returned so the caller can report it.
+func (s *scanner) followHome(path string) (string, error) {
+	if _, err := s.files.List(path); err == nil {
+		return path, nil
+	} else if errors.Is(err, fs.ErrNotExist) || s.ignored(path) {
+		return "", errNotAdded
+	} else if links, ok := s.files.(eachLink); ok {
+		if full, ferr := links.EachLink(path); ferr == nil {
+			if _, lerr := s.files.List(full); lerr == nil {
+				return full, nil
+			}
+		}
+		return path, err
+	} else {
+		return path, err
+	}
 }
 
 func (s *scanner) shared(root, path string, c placed) {

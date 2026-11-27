@@ -259,6 +259,54 @@ func TestAnIgnoredUnreadableCacheParentDoesNotFailTheScan(t *testing.T) {
 	}
 }
 
+func TestAHomeThatIsALinkListsTheNpmCache(t *testing.T) {
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	real := filepath.Join(dir, "home")
+	cache := cacheCandidate(t, dir, key)
+	link := filepath.Join(t.TempDir(), "home-link")
+	linkTo(t, real, link)
+	got := runWithHome(t, b, link, filepath.Join(dir, filepath.FromSlash(key.Root)))
+	if got.status != 0 || got.stderr != "" {
+		t.Fatalf("exit %d, stderr %q\n%s", got.status, got.stderr, got.stdout)
+	}
+	if strings.Contains(got.stdout, "Not read") {
+		t.Fatalf("the home Link is reported as not read\n%s", got.stdout)
+	}
+	out := decode(t, got)
+	if len(out.Unreadable) != 0 {
+		t.Errorf("unreadable = %+v, want none", out.Unreadable)
+	}
+	if listedCache(t, out, cache) != 1 {
+		t.Fatalf("the npm cache is not listed once\n%s", got.stdout)
+	}
+}
+
+func runWithHome(t *testing.T, b binaries, home, root string) ran {
+	t.Helper()
+	cmd := exec.Command(b.sweep, "scan", "--json", root)
+	configHome := t.TempDir()
+	env := without(os.Environ(), "HOME", "USERPROFILE", "UserProfile", "HOMEDRIVE", "HomeDrive", "HOMEPATH", "HomePath")
+	env = append(env, "HOME="+home, "USERPROFILE="+home, "XDG_CONFIG_HOME="+configHome, "XDG_CACHE_HOME="+t.TempDir(), "XDG_DATA_HOME="+t.TempDir())
+	if runtime.GOOS == "windows" {
+		env = windowsConfigEnv(env, configHome)
+		env = windowsCacheEnv(env, t.TempDir())
+	}
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	status := 0
+	if err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatal(err)
+		}
+		status = exit.ExitCode()
+	}
+	return ran{stdout.String(), stderr.String(), status}
+}
+
 func TestAScanRunsWhenTheHomeDirectoryIsUnknown(t *testing.T) {
 	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
 		t.Skip("the configuration directory and the home directory are both HOME")
