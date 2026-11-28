@@ -88,10 +88,10 @@ func show(in, out *os.File, screen tui.Screen, record func([]domain.Candidate) (
 				built, recErr := record(screen.Picked())
 				if recErr != nil {
 					have = false
-					code = incomplete
-					screen.ShowOutcome(spoken(recErr))
+					screen.ReturnToList(spoken(recErr))
 					break
 				}
+				screen.ClearNote()
 				ready = built
 				have = true
 			case tui.Confirm:

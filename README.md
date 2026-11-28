@@ -23,7 +23,8 @@ is left off the list, because a Clean would remove that path.
 
 Enter opens a review of the ticked Candidates that will be moved to the
 trash, and the total. The Plan, including each Fingerprint, is recorded
-then. Nothing is moved yet. `j` and `k` move through that review, and
+then. If that record fails, the list returns with the error under the
+keys and the ticks kept. Nothing is moved yet. `j` and `k` move through that review, and
 the total stays on screen. `n` returns to the list and the ticks stay.
 `y` confirms. Confirming writes that Plan and runs the same Clean as
 `sweep clean --plan`, re-checking the Git rule, the Root rule and the

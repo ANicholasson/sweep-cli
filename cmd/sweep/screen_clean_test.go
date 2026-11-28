@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ANicholasson/sweep-cli/internal/system/trash"
 )
 
 func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
@@ -198,6 +200,60 @@ func TestTheScreenSkipsACandidateChangedAfterTheReview(t *testing.T) {
 	}
 	if _, err := os.Lstat(changed); err != nil {
 		t.Errorf("the changed Candidate is gone: %v", err)
+	}
+}
+
+func TestTheScreenReturnsToTheListWhenThePlanCannotBeRecorded(t *testing.T) {
+	if !movesToTrash() {
+		t.Skip("this operating system has no trash yet, so a Clean removes nothing")
+	}
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	b.home = filepath.Join(dir, "home")
+	b.cache = t.TempDir()
+	if runtime.GOOS != "darwin" {
+		b.data = filepath.Join(dir, "trash-home")
+	}
+	env := b.commandEnv(t)
+	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
+	stale, _ := splitByAge(t, key, at)
+	if len(stale) == 0 {
+		t.Fatal("no Stale Candidate, from the files' modification times")
+	}
+	changed := stale[0]
+	note, err := os.ReadFile(filepath.Join(changed, "fake-old", "note.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := startTerminal(t, b.sweep, dir, env)
+	t.Cleanup(session.close)
+	session.waitFor(t, "enter review")
+	aside := changed + ".aside"
+	if err := trash.Place(changed, aside); err != nil {
+		t.Fatal(err)
+	}
+	session.send(t, []byte{'\r'})
+	back := session.waitFor(t, "sweep:")
+	if !strings.Contains(back, "enter review") || !strings.Contains(back, "[x]") {
+		t.Fatalf("the list did not return with the tick:\n%s", back)
+	}
+	if strings.Contains(back, "q quit") && !strings.Contains(back, "enter review") {
+		t.Fatalf("the error opened the outcome:\n%s", back)
+	}
+	session.send(t, []byte("n"))
+	if again := session.waitFor(t, "sweep:"); !strings.Contains(again, "enter review") {
+		t.Fatalf("n left the list:\n%s", again)
+	}
+	session.send(t, []byte("q"))
+	if code := session.finish(t); code != 0 {
+		t.Fatalf("exit %d, want 0\n%s\n%s", code, session.frame(), session.errText())
+	}
+	if _, err := os.Lstat(writtenPlan(b)); !os.IsNotExist(err) {
+		t.Fatalf("a Plan was written: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(aside, "fake-old", "note.txt"))
+	if err != nil || !bytes.Equal(got, note) {
+		t.Fatalf("the Candidate moved aside is %q, %v", got, err)
 	}
 }
 

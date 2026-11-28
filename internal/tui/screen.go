@@ -49,6 +49,7 @@ type Screen struct {
 	picked  map[string]bool
 	mode    mode
 	outcome string
+	note    string
 	focus   int
 }
 
@@ -114,6 +115,17 @@ func (s *Screen) ShowOutcome(text string) {
 	s.mode = modeOutcome
 	s.outcome = text
 	s.focus = 0
+}
+
+// ReturnToList leaves the review, shows text on the list, and keeps the ticks.
+func (s *Screen) ReturnToList(text string) {
+	s.mode = modeList
+	s.note = strings.TrimRight(text, "\n")
+}
+
+// ClearNote drops the list note once a Plan has been recorded.
+func (s *Screen) ClearNote() {
+	s.note = ""
 }
 
 // Decoder turns terminal bytes into keys. An escape sequence that arrives
@@ -330,7 +342,7 @@ func (s Screen) bodyLines() []drawn {
 func (s Screen) chromeLines() []drawn {
 	n, size := s.pickedCount()
 	onDocker := s.lines[s.choose[s.at]].kind == docker
-	return []drawn{
+	lines := []drawn{
 		{kind: gap},
 		{text: s.mark(s.dockerIndex()) + dockerText(s.docker), kind: docker, keep: onDocker},
 		{kind: gap},
@@ -340,6 +352,13 @@ func (s Screen) chromeLines() []drawn {
 		{text: fmt.Sprintf("%s, %s picked", counted(n), human(size)), keep: true},
 		{text: listKeys},
 	}
+	if s.note == "" {
+		return lines
+	}
+	for _, line := range strings.Split(s.note, "\n") {
+		lines = append(lines, drawn{text: line, keep: true})
+	}
+	return lines
 }
 
 func (s Screen) parts() (body, foot []drawn) {

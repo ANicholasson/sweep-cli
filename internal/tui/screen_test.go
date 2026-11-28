@@ -435,6 +435,31 @@ func TestEnterReviewsThePlanAndCancelKeepsTheTicks(t *testing.T) {
 	assertRow(t, back, "dist", "  [x]", "2.0 KiB", "Build output", "2026-11-20 00:00:00Z")
 }
 
+func TestAFailedReviewReturnsToTheListWithTheTicks(t *testing.T) {
+	stale := candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)
+	screen := tui.New(scan.Result{Candidates: []domain.Candidate{stale}, DockerData: domain.Reported(0)})
+	if screen.Press([]byte("\r")) != tui.Review {
+		t.Fatal("enter did not open the review")
+	}
+	const note = "sweep: /work/app/node_modules: lstat /work/app/node_modules: no such file or directory"
+	screen.ReturnToList(note)
+	text := screen.Text()
+	for _, want := range []string{note, "[x]", "enter review", "1 Candidate, 1.0 KiB picked"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("list =\n%s\nwant %s", text, want)
+		}
+	}
+	if strings.Contains(text, "Will be moved to trash") || (strings.Contains(text, "q quit") && !strings.Contains(text, "enter review")) {
+		t.Fatalf("the list became the outcome:\n%s", text)
+	}
+	if screen.Press([]byte("n")) != tui.Stay || !strings.Contains(screen.Text(), note) {
+		t.Fatal("n left the list or dropped the error")
+	}
+	if screen.Press([]byte("q")) != tui.Quit {
+		t.Fatal("q did not leave the list")
+	}
+}
+
 func TestConfirmShowsTheCleanReport(t *testing.T) {
 	stale := candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)
 	screen := tui.New(scan.Result{Candidates: []domain.Candidate{stale}, DockerData: domain.Reported(0)})
