@@ -79,7 +79,7 @@ func (s *termSession) waitForAll(t *testing.T, parts ...string) string {
 			return frame
 		}
 		if s.exited() {
-			t.Fatalf("screen exited before %q\n%s\n%s", parts, frame, s.errText())
+			t.Fatalf("screen exited %d before %q\n%s\n%s", s.exit, parts, frame, s.errText())
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

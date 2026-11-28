@@ -5,6 +5,7 @@ package main_test
 import (
 	"bytes"
 	"os"
+	"runtime"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -38,9 +39,12 @@ func openPTY() (*os.File, *os.File, error) {
 
 func darwinPTYName(pty *os.File) (string, error) {
 	buf := make([]byte, 128)
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, pty.Fd(), uintptr(unix.TIOCPTYGNAME), uintptr(unsafe.Pointer(&buf[0])))
-	if errno != 0 {
-		return "", errno
+	// TIOCPTYGNAME writes the name into buf. IoctlSetInt is the libSystem
+	// ioctl, and on this architecture the pointer fits in the argument.
+	err := unix.IoctlSetInt(int(pty.Fd()), unix.TIOCPTYGNAME, int(uintptr(unsafe.Pointer(&buf[0]))))
+	runtime.KeepAlive(buf)
+	if err != nil {
+		return "", err
 	}
 	if i := bytes.IndexByte(buf, 0); i >= 0 {
 		buf = buf[:i]

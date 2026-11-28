@@ -5,6 +5,8 @@ package main_test
 import (
 	"os"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -35,7 +37,13 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := attr.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(&pc), unsafe.Sizeof(pc)); err != nil {
+	// The attribute value is the pseudoconsole handle, the same way the
+	// console sample passes HPCON rather than a pointer to it.
+	if err := attr.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(pc), unsafe.Sizeof(pc)); err != nil {
+		t.Fatal(err)
+	}
+	exe, err := windows.UTF16PtrFromString(bin)
+	if err != nil {
 		t.Fatal(err)
 	}
 	cmdLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine([]string{bin}))
@@ -55,10 +63,12 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 	si.ProcThreadAttributeList = attr.List()
 	var pi windows.ProcessInformation
 	flags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
-	err = windows.CreateProcess(nil, cmdLine, nil, nil, false, flags, &block[0], dirp, &si.StartupInfo, &pi)
+	err = windows.CreateProcess(exe, cmdLine, nil, nil, false, flags, &block[0], dirp, &si.StartupInfo, &pi)
 	runtime.KeepAlive(attr)
 	runtime.KeepAlive(block)
 	runtime.KeepAlive(pc)
+	runtime.KeepAlive(exe)
+	runtime.KeepAlive(cmdLine)
 	attr.Delete()
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +78,7 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 	in := os.NewFile(uintptr(inWrite), "in")
 	out := os.NewFile(uintptr(outRead), "out")
 	s := &termSession{in: in, done: make(chan struct{})}
+	readDone := make(chan struct{})
 	go func() {
 		buf := make([]byte, 4096)
 		for {
@@ -76,6 +87,7 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 				s.appendOut(append([]byte(nil), buf[:n]...))
 			}
 			if readErr != nil {
+				close(readDone)
 				return
 			}
 		}
@@ -87,6 +99,7 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 		s.exit = int(code)
 		_ = windows.CloseHandle(pi.Process)
 		windows.ClosePseudoConsole(pc)
+		<-readDone
 		_ = out.Close()
 		close(s.done)
 	}()
@@ -101,8 +114,12 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 }
 
 func windowsEnv(env []string) ([]uint16, error) {
+	sorted := append([]string(nil), env...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return strings.ToUpper(envKey(sorted[i])) < strings.ToUpper(envKey(sorted[j]))
+	})
 	var out []uint16
-	for _, e := range env {
+	for _, e := range sorted {
 		p, err := windows.UTF16FromString(e)
 		if err != nil {
 			return nil, err
@@ -114,4 +131,9 @@ func windowsEnv(env []string) ([]uint16, error) {
 	}
 	out = append(out, 0)
 	return out, nil
+}
+
+func envKey(kv string) string {
+	key, _, _ := strings.Cut(kv, "=")
+	return key
 }

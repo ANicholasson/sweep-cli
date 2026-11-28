@@ -485,11 +485,20 @@ func TestAShortReviewAndOutcomeScrollToEveryLine(t *testing.T) {
 		t.Fatal("enter confirmed")
 	}
 	page := screen.Page(80, 24)
-	if !strings.Contains(page, "/work/app/out/00") || strings.Contains(page, "/work/app/out/29") {
+	if !strings.Contains(page, "> Will be moved to trash") || !strings.Contains(page, "/work/app/out/00") || strings.Contains(page, "/work/app/out/29") {
 		t.Fatalf("the review did not start at the first Candidate:\n%s", page)
 	}
 	if !strings.Contains(page, "will be moved to trash") || !strings.Contains(page, "y confirm") {
 		t.Fatalf("the confirm line left the review:\n%s", page)
+	}
+	screen.Press([]byte("j"))
+	moved := screen.Page(80, 24)
+	if moved == page || !strings.Contains(moved, "> ") {
+		t.Fatalf("j did not move the focused row:\n%s", moved)
+	}
+	screen.Press([]byte("k"))
+	if screen.Page(80, 24) != page {
+		t.Fatal("k did not move back")
 	}
 	for range 40 {
 		if screen.Press([]byte("j")) != tui.Stay {

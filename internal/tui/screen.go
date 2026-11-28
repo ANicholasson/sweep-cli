@@ -410,9 +410,45 @@ func pageAround(body, footer []drawn, focus, width, height int) string {
 	if budget < 0 {
 		budget = 0
 	}
-	window := clipLines(texts(windowAround(body, focus, budget)), width)
+	body = markFocus(body, focus)
+	window := clipLines(texts(windowFrom(body, focus, budget)), width)
 	parts := append(window, clipLines(texts(foot), width)...)
 	return strings.Join(parts, "\n") + "\n"
+}
+
+func markFocus(lines []drawn, focus int) []drawn {
+	if len(lines) == 0 {
+		return lines
+	}
+	if focus < 0 || focus >= len(lines) {
+		focus = 0
+	}
+	out := make([]drawn, len(lines))
+	copy(out, lines)
+	for i := range out {
+		if i == focus {
+			out[i].text = "> " + out[i].text
+			continue
+		}
+		out[i].text = "  " + out[i].text
+	}
+	return out
+}
+
+func windowFrom(lines []drawn, focus, budget int) []drawn {
+	if len(lines) == 0 || budget <= 0 {
+		return nil
+	}
+	if len(lines) <= budget {
+		return lines
+	}
+	if focus < 0 {
+		focus = 0
+	}
+	if focus > len(lines)-budget {
+		focus = len(lines) - budget
+	}
+	return lines[focus : focus+budget]
 }
 
 func (s Screen) diagLines() []drawn {
