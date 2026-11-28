@@ -36,6 +36,19 @@ func openParent(path, root string, follow bool) (int, error) {
 }
 
 func openBeneath(dir, root string) (int, error) {
+	return openFrom(dir, root, func(fd int, name string) (int, error) {
+		return openAt(fd, name, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	})
+}
+
+// openForDelete walks from the Root to dir. A mount on that walk is not
+// entered. A trash Move does not use this: the trash for another volume
+// is on that volume, and the open has to reach it.
+func openForDelete(dir, root string) (int, error) {
+	return openFrom(dir, root, openChild)
+}
+
+func openFrom(dir, root string, step func(int, string) (int, error)) (int, error) {
 	dir = filepath.Clean(dir)
 	root = filepath.Clean(root)
 	if root == "" || !contains(root, dir) {
@@ -57,10 +70,7 @@ func openBeneath(dir, root string) (int, error) {
 		if name == "" || name == "." {
 			continue
 		}
-		// openChild refuses a mount, including a bind mount of the same
-		// filesystem. A mount between the Root and this directory is not
-		// entered, so a path outside the Root is not deleted.
-		next, err := openChild(fd, name)
+		next, err := step(fd, name)
 		_ = syscall.Close(fd)
 		if err != nil {
 			return -1, &os.PathError{Op: "open", Path: dir, Err: err}

@@ -130,6 +130,13 @@ func TestDeleteDoesNotDescendIntoABindMountAboveTheCandidate(t *testing.T) {
 	}
 	defer func() { _ = unix.Unmount(mountPoint, unix.MNT_DETACH) }()
 
+	// The trash open still enters the mount. Delete does not.
+	opened, oerr := openBeneath(mountPoint, root)
+	if oerr != nil {
+		t.Fatal(oerr)
+	}
+	_ = unix.Close(opened)
+
 	candidate := filepath.Join(mountPoint, "node_modules")
 	err := (Mover{}).Delete(root, candidate)
 	got, rerr := os.ReadFile(secret)

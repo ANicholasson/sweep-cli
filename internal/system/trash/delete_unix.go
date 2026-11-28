@@ -19,7 +19,7 @@ func (Mover) Delete(root, path string) error {
 	if err != nil {
 		return err
 	}
-	parent, err := openBeneath(filepath.Dir(abs), root)
+	parent, err := openForDelete(filepath.Dir(abs), root)
 	if err != nil {
 		return err
 	}
