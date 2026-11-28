@@ -3,6 +3,7 @@
 package trash
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -38,14 +39,14 @@ func removeName(dirfd int, name string) error {
 	if err != syscall.EISDIR && err != syscall.EPERM && err != syscall.EACCES {
 		return &os.PathError{Op: "delete", Path: name, Err: err}
 	}
-	child, oerr := openAt(dirfd, name, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	child, oerr := openChild(dirfd, name)
 	if oerr != nil {
+		if errors.Is(oerr, syscall.EXDEV) {
+			return &os.PathError{Op: "delete", Path: name, Err: syscall.EXDEV}
+		}
 		return &os.PathError{Op: "delete", Path: name, Err: err}
 	}
 	defer func() { _ = syscall.Close(child) }()
-	if err := sameDevice(dirfd, child); err != nil {
-		return &os.PathError{Op: "delete", Path: name, Err: err}
-	}
 	names, rerr := namesOf(child)
 	if rerr != nil {
 		return rerr
@@ -60,20 +61,6 @@ func removeName(dirfd int, name string) error {
 	}
 	if err := unix.Unlinkat(dirfd, name, unix.AT_REMOVEDIR); err != nil {
 		return &os.PathError{Op: "delete", Path: name, Err: err}
-	}
-	return nil
-}
-
-func sameDevice(parent, child int) error {
-	var ps, cs unix.Stat_t
-	if err := unix.Fstat(parent, &ps); err != nil {
-		return err
-	}
-	if err := unix.Fstat(child, &cs); err != nil {
-		return err
-	}
-	if ps.Dev != cs.Dev {
-		return syscall.EXDEV
 	}
 	return nil
 }
