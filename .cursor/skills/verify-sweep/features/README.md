@@ -48,7 +48,8 @@ Keep implementation details out of the map. Name only user paths, commands, requ
 - [Dry run writes a Plan](./clean-dry-run.md) covers the default Pick, the Plan file in the per-user cache, `--pick`, a Plan path inside a Candidate, a Plan path inside a Project, and the Configuration a dry run reads: Roots, the Stale threshold, the Ignore list and the file it names.
 - [Pick by Kind, Ecosystem and age](./clean-pick.md) covers narrowing a dry run by Kind and Ecosystem, changing the age that counts as Stale for one run, picking every Candidate whatever its age, and leaving Shared caches and Docker data unpicked.
 - [Clean carries out a Plan](./clean.md) covers moving the Plan's Candidates to the trash on Linux, macOS and Windows, a Skip under each Safety rule, a Candidate the trash cannot take, and a Plan that is refused.
+- [Delete on request](./clean-delete.md) covers one Clean that deletes the Plan's Candidates permanently, the Safety rules re-checked before each Delete, and a dry run that refuses the flag.
 - [Configuration](./scan-configuration.md) covers the per-user file: default Roots, the Stale threshold, the Ignore list, the shared-caches setting, and a missing or rejected file.
 - [Shared caches](./scan-shared-caches.md) covers the npm cache: the Root sweep adds, the Shared caches group, `--no-shared-caches`, and a Pick that leaves it out unless `--pick-caches` names its Ecosystem.
 
-Not built yet: Delete. A Clean is driven only against `$RUN/fixture`, and its proof is the listing showing the Candidates the Plan moved are in the Fixture's trash and every Trap is still present.
+A Clean is driven only against `$RUN/fixture`. Proof that a Clean moved Candidates is the listing showing them in the Fixture's trash, with every Trap still present. Proof that a Clean deleted Candidates is the listing showing them gone from the tree and absent from that trash, with every Trap still present.

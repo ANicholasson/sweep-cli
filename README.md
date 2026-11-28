@@ -145,10 +145,10 @@ cache, `--stale-days` is not a whole number of days, or the
 Plan would be written inside a Candidate, an Ignore path, or a Project.
 A usage error writes no Plan.
 
-    sweep clean --plan file
+    sweep clean --plan file [--delete]
 
 `sweep clean --plan file` carries out exactly the Plan in that file.
-Immediately before it moves a Candidate it re-checks the Git rule, the
+Immediately before it takes a Candidate it re-checks the Git rule, the
 Root rule and the Fingerprint rule. A Candidate that fails one is a Skip,
 named with that rule, and nothing inside it is touched. The Root rule
 reaches the Candidate from a Root one component at a time and does not
@@ -167,12 +167,22 @@ delete it, and the rest of the Plan continues.
 The summary lists what was moved to the trash, what was skipped and what
 failed. Space that was moved is not called reclaimed.
 
-The exit status is 0 when every Candidate in the Plan was moved, 1 when a
-Candidate was skipped or could not be moved, and 2 when the Plan is missing
-from the command, is malformed or has an unknown version, a Root or a
-Candidate is not a clean absolute path, or this operating system has no
+`--delete` makes that one run Delete instead of Trash. The output says
+the removal is permanent before anything is removed. The same three
+Safety rules are re-checked before each Delete. The summary lists what
+was deleted and calls that space reclaimed. A Candidate that could not
+be deleted is a failure, and the rest of the Plan continues. No
+configuration key can make Delete the default. `--delete` on a dry run
+is a usage error, and nothing is removed.
+
+The exit status is 0 when every Candidate in the Plan was moved or
+deleted, 1 when a Candidate was skipped or could not be moved or
+deleted, and 2 when the Plan is missing from the command, is malformed
+or has an unknown version, a Root or a Candidate is not a clean absolute
+path, `--delete` is set on a dry run, or this operating system has no
 trash yet.
-A refused Clean removes nothing.
+A refused Clean removes nothing. `--delete` does not use the trash, so
+the last of those refusals applies only to a Clean that moves.
 
 ## Safety rules
 

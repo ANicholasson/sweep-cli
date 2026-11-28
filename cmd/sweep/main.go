@@ -122,8 +122,13 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	var staleDays daysFlag
 	flags.Var(&staleDays, "stale-days", "days before a Candidate is Stale, for this run")
 	all := flags.Bool("all", false, "pick every Candidate, whatever its age")
+	del := flags.Bool("delete", false, "Delete Candidates permanently for this run")
 	given, err := parseInterspersed(flags, args)
 	if err != nil {
+		return misused
+	}
+	if *del && *dry {
+		writeCleanUsage(stderr)
 		return misused
 	}
 	if !*dry {
@@ -131,7 +136,11 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 			writeCleanUsage(stderr)
 			return misused
 		}
-		return actOnPlan(*planPath, stdout, stderr)
+		how := clean.ToTrash
+		if *del {
+			how = clean.ToDelete
+		}
+		return actOnPlan(*planPath, how, stdout, stderr)
 	}
 	kinds, err := kindsOf(kind)
 	if err != nil {
@@ -235,10 +244,7 @@ func cleanCommand(args []string, stdout, stderr io.Writer) int {
 	return done
 }
 
-// actOnPlan carries out the Plan at planPath. It removes nothing until the
-// Plan has been read and the trash can take a Candidate. A Candidate the
-// trash cannot take stays where it was.
-func actOnPlan(planPath string, stdout, stderr io.Writer) int {
+func actOnPlan(planPath string, how clean.Removal, stdout, stderr io.Writer) int {
 	data, err := os.ReadFile(planPath)
 	if err != nil {
 		say(stderr, err)
@@ -249,15 +255,25 @@ func actOnPlan(planPath string, stdout, stderr io.Writer) int {
 		say(stderr, err)
 		return misused
 	}
-	mover, err := trash.Open()
-	if err != nil {
-		say(stderr, err)
-		if errors.Is(err, trash.ErrUnavailable) {
-			return misused
+	var bin clean.Trash
+	if how == clean.ToDelete {
+		if _, err := fmt.Fprintln(stdout, "The removal is permanent."); err != nil {
+			say(stderr, err)
+			return incomplete
 		}
-		return incomplete
+		bin = trash.Mover{}
+	} else {
+		mover, err := trash.Open()
+		if err != nil {
+			say(stderr, err)
+			if errors.Is(err, trash.ErrUnavailable) {
+				return misused
+			}
+			return incomplete
+		}
+		bin = mover
 	}
-	result := clean.Run(files.Disk{}, git.Local{}, mover, parsed)
+	result := clean.Run(files.Disk{}, git.Local{}, bin, parsed, how)
 	if err := report.Clean(stdout, result); err != nil {
 		say(stderr, err)
 		return incomplete
@@ -541,7 +557,7 @@ func say(stderr io.Writer, err error) {
 
 const (
 	cleanDryUsage = "sweep clean --dry-run [--plan file] [--pick path] [--pick-caches Ecosystem] [--kind Kind] [--ecosystem Name] [--stale-days n] [--all] [--no-shared-caches] [Root...]"
-	cleanActUsage = "sweep clean --plan file"
+	cleanActUsage = "sweep clean --plan file [--delete]"
 )
 
 func writeCleanUsage(w io.Writer) {
