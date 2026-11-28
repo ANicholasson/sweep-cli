@@ -47,6 +47,10 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 	}
 	si := &windows.StartupInfoEx{}
 	si.Cb = uint32(unsafe.Sizeof(*si))
+	// A pseudoconsole supplies console handles only when the standard
+	// handles stay null and this flag is set. Without it the child keeps
+	// the parent's redirected pipes and the screen sees no terminal.
+	si.Flags = windows.STARTF_USESTDHANDLES
 	si.ProcThreadAttributeList = attr.List()
 	var pi windows.ProcessInformation
 	flags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
@@ -74,7 +78,7 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 			if n > 0 {
 				s.appendOut(append([]byte(nil), buf[:n]...))
 			}
-			if readErr != nil {
+			if readErr != nil || n == 0 {
 				close(readDone)
 				return
 			}
