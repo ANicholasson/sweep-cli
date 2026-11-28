@@ -81,29 +81,13 @@ type ran struct {
 
 func (b binaries) run(t *testing.T, dir string, args ...string) ran {
 	t.Helper()
+	return b.runWith(t, dir, b.commandEnv(t), args...)
+}
+
+func (b binaries) runWith(t *testing.T, dir string, env []string, args ...string) ran {
+	t.Helper()
 	cmd := exec.Command(b.sweep, args...)
 	cmd.Dir = dir
-	configHome, cacheHome := b.userHomes(t)
-	dataHome := b.data
-	if dataHome == "" && !b.omitData {
-		dataHome = t.TempDir()
-	}
-	if runtime.GOOS == "darwin" && b.data != "" && b.config == "" {
-		configHome = dataHome
-		cacheHome = dataHome
-		ensureDarwinHome(t, dataHome)
-	}
-	home := b.home
-	if home == "" {
-		home = configHome
-	}
-	env := pointUserDirs(os.Environ(), configHome, cacheHome, dataHome, home)
-	if b.omitData {
-		env = without(env, "XDG_DATA_HOME")
-	}
-	if b.pwd != "" {
-		env = append(without(env, "PWD"), "PWD="+b.pwd)
-	}
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -229,6 +213,32 @@ func command(t *testing.T, name string, args ...string) {
 	if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
 		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out)
 	}
+}
+
+func (b binaries) commandEnv(t *testing.T) []string {
+	t.Helper()
+	configHome, cacheHome := b.userHomes(t)
+	dataHome := b.data
+	if dataHome == "" && !b.omitData {
+		dataHome = t.TempDir()
+	}
+	if runtime.GOOS == "darwin" && b.data != "" && b.config == "" {
+		configHome = dataHome
+		cacheHome = dataHome
+		ensureDarwinHome(t, dataHome)
+	}
+	home := b.home
+	if home == "" {
+		home = configHome
+	}
+	env := pointUserDirs(os.Environ(), configHome, cacheHome, dataHome, home)
+	if b.omitData {
+		env = without(env, "XDG_DATA_HOME")
+	}
+	if b.pwd != "" {
+		env = append(without(env, "PWD"), "PWD="+b.pwd)
+	}
+	return env
 }
 
 // userHomes is the configuration directory and the cache directory for one

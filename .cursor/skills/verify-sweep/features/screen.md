@@ -1,11 +1,14 @@
 # Interactive screen
 
-Plain `sweep`, when standard input and standard output are a terminal, opens a list of Candidates grouped by Project. Each row shows a tick, the Size, the Kind, Last used and the path. Stale Candidates beneath the Roots the user gave start ticked. Shared caches are in their own section and start unticked. Docker data is shown and cannot be ticked. The Reason for the highlighted Candidate is shown. A total of how many Candidates and how much Size are picked updates with every tick. `j` and `k` move, `t` ticks, `u` unticks and `q` quits. Quitting writes no Plan and removes nothing.
+Plain `sweep`, when standard input and standard output are a terminal, opens a list of Candidates grouped by Project. Each row shows a tick, the Size, the Kind, Last used and the path. Stale Candidates beneath the Roots the user gave start ticked. Shared caches are in their own section and start unticked. Docker data is shown and cannot be ticked. The Reason for the highlighted Candidate is shown. A total of how many Candidates and how much Size are picked updates with every tick. `j` and `k` move, `t` ticks, `u` unticks and `q` quits. Enter opens a review of the ticked Candidates that will be moved to the trash, and the total. The Plan, including each Fingerprint, is recorded then. The review shows those Sizes and that total. If that record fails, the list returns with the error under the keys and the ticks kept. Nothing is moved yet. `n` returns to the list and the ticks stay. `y` confirms. Confirming writes that Plan and runs the same Clean as `sweep clean --plan`, re-checking the Git rule, the Root rule and the Fingerprint rule. The screen then shows what was moved to the trash, each Skip with its rule, and each failure. Trashed space is described as moved to the trash. `q` from the list or the review writes no Plan and removes nothing.
 
 ## Sub-features
 
 - `list` shows the Fixture's Candidates, the default ticks, Docker data, the Reason, the total and the keys.
 - `tick-cache` ticks the npm Shared cache and the total changes.
+- `review` shows the default Pick and not the unticked Shared cache.
+- `cancel` returns to the list and writes no Plan.
+- `confirm` ticks the Shared cache, runs the Clean, and leaves every Trap in place.
 - `quit` leaves the Fixture as it was.
 
 ## How to get to it (user POV)
@@ -19,12 +22,17 @@ Preconditions:
 - Baseline preconditions from the [index](./README.md) hold.
 - `tmux` is on the PATH. The helper's `run` captures pipes, so it takes the no-terminal path and cannot draw this screen. Drive the binary `launch` built, in a tmux session.
 
-- **List.** Start a detached tmux session 200 columns wide and 80 rows tall, working directory `$RUN/fixture`, command `$RUN/bin/sweep` plus the suffix in `$RUN/goexe`, with `HOME` and `USERPROFILE` set to `$RUN/scratch/home`. Capture the pane once it contains `q quit`. A 24-row pane shows only the top of the list. At 80 rows the pane shows a Project heading, a row with `[x]` for the Stale Candidate, a `Shared caches` heading whose row contains `[ ]` and `_cacache`, a `Docker data` line with no `[`, a `Reason` line, a line ending in `picked`, and `j/k move    t tick    u untick    q quit`.
+- **List.** Start a detached tmux session 200 columns wide and 80 rows tall, working directory `$RUN/fixture`, command `$RUN/bin/sweep` plus the suffix in `$RUN/goexe`, with `HOME` and `USERPROFILE` set to `$RUN/scratch/home`. Capture the pane once it contains `q quit`. A 24-row pane shows only the top of the list. At 80 rows the pane shows a Project heading, a row with `[x]` for the Stale Candidate, a `Shared caches` heading whose row contains `[ ]` and `_cacache`, a `Docker data` line with no `[`, a `Reason` line, a line ending in `picked`, and `j/k move    t tick    u untick    enter review    q quit`.
 - **Tick the Shared cache.** Send `j` 30 times, then `k`, so the Shared cache row is highlighted and still contains `[ ]`. Capture the pane and keep the total line. Send `t`. Capture the pane again. That row contains `[x]` and the total line differs from the capture before `t`.
 - **Quit.** Send `q` with no Enter. The session's command exits 0. `"$H" doctor "$RUN"` still ends with `doctor: worth driving`, so the Fixture is unchanged.
+- **Review.** On a fresh session, send Enter. The pane contains `Will be moved to trash`, the Stale Candidate's path, a line ending in `will be moved to trash`, and `j/k move    y confirm    n back`. It does not contain `_cacache`.
+- **Cancel.** Send `n` with no Enter. The pane contains `enter review` and the Stale Candidate's `[x]`. The default Plan file does not exist. `"$H" doctor "$RUN"` still ends with `doctor: worth driving`.
+- **Confirm.** Point the trash at the Fixture the way [Clean](./clean.md) does, and point the cache directory at `$RUN/scratch/cache`. On the list, move to the Shared cache row, send `t`, then Enter, then `y`. The pane contains `Moved to trash`, the Stale Candidate, the Shared cache, the Sizes `du` gave, and it does not contain `reclaimed`. Both paths are gone from where they were and are in the Fixture's trash. Every Trap is still in place. The Plan file's bytes equal a `sweep clean --dry-run --plan <file> --pick <cache>` Plan made before the Clean, from the same directory. Send `q`. The session exits 0.
 
 ## Gotchas
 
 - Plain `sweep` with a pipe is the no-terminal path in [Version and usage](./version-and-usage.md). It does not draw this list.
-- Send `q` with no Enter. Enter is not a key the screen reads as quit.
+- Send `q` with no Enter. Enter opens the review. It does not quit, and it does not confirm.
+- Send `y` and `n` with no Enter. `y` on the list does nothing. `y` on the review confirms. `n` on the review returns to the list.
 - The npm cache is the last Candidate. Docker data is the row after it, and `t` there does not change the total.
+- Confirm moves the ticked Candidates. Run it last, on a Fixture whose listing is allowed to change. The proof is that listing and the trash, not a later doctor.
