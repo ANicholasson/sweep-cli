@@ -28,7 +28,7 @@ func (failingWriter) Write([]byte) (int, error) {
 func TestVersionFlagPrintsAVersionAndExitsZero(t *testing.T) {
 	var stdout, stderr strings.Builder
 
-	status := run([]string{"--version"}, &stdout, &stderr)
+	status := run([]string{"--version"}, nil, &stdout, &stderr)
 
 	if status != 0 {
 		t.Errorf("exit status = %d, want 0", status)
@@ -45,7 +45,7 @@ func TestVersionFlagPrintsAVersionAndExitsZero(t *testing.T) {
 func TestVersionFlagFailsWhenStdoutCannotBeWritten(t *testing.T) {
 	var stderr strings.Builder
 
-	status := run([]string{"--version"}, failingWriter{}, &stderr)
+	status := run([]string{"--version"}, nil, failingWriter{}, &stderr)
 
 	if status == 0 {
 		t.Errorf("exit status = 0, want non-zero")
@@ -55,15 +55,35 @@ func TestVersionFlagFailsWhenStdoutCannotBeWritten(t *testing.T) {
 	}
 }
 
-func TestNoArgumentsIsAUsageError(t *testing.T) {
+func TestNoArgumentsWithoutATerminalPointsAtScan(t *testing.T) {
 	var stdout, stderr strings.Builder
 
-	status := run(nil, &stdout, &stderr)
+	status := run(nil, nil, &stdout, &stderr)
 
 	if status != 2 {
 		t.Errorf("exit status = %d, want 2", status)
 	}
-	if !strings.Contains(stderr.String(), "-version") || !strings.Contains(stderr.String(), "clean --dry-run") {
+	const want = "sweep: no interactive terminal\nsweep: run sweep scan to list Candidates\n"
+	if stderr.String() != want {
+		t.Errorf("stderr = %q, want %q", stderr.String(), want)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", stdout.String())
+	}
+}
+
+func TestUnknownCommandIsAUsageError(t *testing.T) {
+	var stdout, stderr strings.Builder
+
+	status := run([]string{"recycle"}, nil, &stdout, &stderr)
+
+	if status != 2 {
+		t.Errorf("exit status = %d, want 2", status)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", stdout.String())
+	}
+	if !strings.HasPrefix(stderr.String(), "usage: sweep\n") || !strings.Contains(stderr.String(), "sweep scan [--json] [--no-shared-caches] [Root...]") {
 		t.Errorf("stderr = %q, want the usage", stderr.String())
 	}
 }
@@ -71,7 +91,7 @@ func TestNoArgumentsIsAUsageError(t *testing.T) {
 func TestScanOffersNoFlagForDockerData(t *testing.T) {
 	var stdout, stderr strings.Builder
 
-	status := run([]string{"scan", "-h"}, &stdout, &stderr)
+	status := run([]string{"scan", "-h"}, nil, &stdout, &stderr)
 
 	if status != 2 {
 		t.Errorf("exit status = %d, want 2", status)
@@ -93,7 +113,7 @@ func TestScanFailsWhenStdoutCannotBeWritten(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	status := run([]string{"scan", t.TempDir()}, failingWriter{}, &stderr)
+	status := run([]string{"scan", t.TempDir()}, nil, failingWriter{}, &stderr)
 
 	if status != 1 {
 		t.Errorf("exit status = %d, want 1", status)

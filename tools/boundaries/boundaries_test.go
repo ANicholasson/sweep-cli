@@ -203,6 +203,11 @@ func TestBoundaries(t *testing.T) {
 		},
 
 		{
+			name:  "the interactive screen imports an adapter",
+			files: map[string]string{"internal/tui/screen.go": "package tui\n\nimport \"example.com/sweep/internal/system/files\"\n"},
+			want:  []string{`internal/tui/screen.go:3:8: only-cmd-imports-adapters: imports "example.com/sweep/internal/system/files": only cmd/sweep imports an adapter`},
+		},
+		{
 			name:  "the report imports an adapter",
 			files: map[string]string{"internal/report/scan.go": "package report\n\nimport \"example.com/sweep/internal/system/files\"\n"},
 			want:  []string{`internal/report/scan.go:3:8: only-cmd-imports-adapters: imports "example.com/sweep/internal/system/files": only cmd/sweep imports an adapter`},
