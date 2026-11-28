@@ -395,7 +395,7 @@ func TestEnterReviewsThePlanAndCancelKeepsTheTicks(t *testing.T) {
 	if strings.Contains(review, recent.Path) || strings.Contains(review, cache.Path) || strings.Contains(review, "Docker") {
 		t.Fatalf("review lists something that is not ticked:\n%s", review)
 	}
-	if !strings.Contains(review, "1 Candidate, 1.0 KiB will be moved to trash\n") || !strings.Contains(review, "y confirm    n back\n") {
+	if !strings.Contains(review, "1 Candidate, 1.0 KiB will be moved to trash\n") || !strings.Contains(review, "j/k move    y confirm    n back\n") {
 		t.Fatalf("review =\n%s\nwant the total and the confirm keys", review)
 	}
 	if strings.Contains(strings.ToLower(review), "reclaimed") {
@@ -456,12 +456,85 @@ func TestConfirmShowsTheCleanReport(t *testing.T) {
 	if screen.Press([]byte("y")) != tui.Stay || screen.Press([]byte("t")) != tui.Stay {
 		t.Fatal("the outcome accepted another clean")
 	}
-	short := screen.Page(40, 5)
-	if strings.Contains(short, "SIZE") || !strings.Contains(short, "Moved to trash:") || !strings.Contains(short, "q quit\n") {
-		t.Fatalf("a short outcome hid the summary:\n%s", short)
+	short := screen.Page(40, 6)
+	if !strings.Contains(short, stale.Path) || !strings.Contains(short, "q quit\n") {
+		t.Fatalf("the first outcome hid the moved path or quit:\n%s", short)
+	}
+	if strings.Contains(short, "Moved to trash:") {
+		t.Fatalf("a short outcome showed the summary before scrolling:\n%s", short)
+	}
+	for range 20 {
+		screen.Press([]byte("j"))
+	}
+	short = screen.Page(40, 6)
+	if !strings.Contains(short, "Moved to trash:") || !strings.Contains(short, "q quit\n") {
+		t.Fatalf("j did not reach the summary:\n%s", short)
 	}
 	if screen.Press([]byte("q")) != tui.Quit {
 		t.Fatal("q did not leave the outcome")
+	}
+}
+
+func TestAShortReviewAndOutcomeScrollToEveryLine(t *testing.T) {
+	candidates := make([]domain.Candidate, 30)
+	for i := range candidates {
+		candidates[i] = candidate("/work/app", fmt.Sprintf("/work/app/out/%02d", i), domain.Cache, "The compiler writes it again.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)
+	}
+	screen := tui.New(scan.Result{Candidates: candidates, DockerData: domain.Reported(0)})
+	if screen.Press([]byte("\r")) != tui.Stay {
+		t.Fatal("enter confirmed")
+	}
+	page := screen.Page(80, 24)
+	if !strings.Contains(page, "/work/app/out/00") || strings.Contains(page, "/work/app/out/29") {
+		t.Fatalf("the review did not start at the first Candidate:\n%s", page)
+	}
+	if !strings.Contains(page, "will be moved to trash") || !strings.Contains(page, "y confirm") {
+		t.Fatalf("the confirm line left the review:\n%s", page)
+	}
+	for range 40 {
+		if screen.Press([]byte("j")) != tui.Stay {
+			t.Fatal("j confirmed")
+		}
+	}
+	page = screen.Page(80, 24)
+	if !strings.Contains(page, "/work/app/out/29") || !strings.Contains(page, "y confirm") {
+		t.Fatalf("j did not reach the last Candidate:\n%s", page)
+	}
+	for range 40 {
+		screen.Press([]byte("k"))
+	}
+	page = screen.Page(80, 24)
+	if !strings.Contains(page, "/work/app/out/00") || strings.Contains(page, "/work/app/out/29") {
+		t.Fatalf("k did not return to the first Candidate:\n%s", page)
+	}
+
+	var report strings.Builder
+	report.WriteString("Moved to trash\nSIZE  PATH\n")
+	for i := range candidates {
+		fmt.Fprintf(&report, "1.0 KiB  /work/app/out/%02d\n", i)
+	}
+	report.WriteString("\nSkipped\nGit rule  /work/kept\n\nFailed\n1.0 KiB  /work/stuck  the trash refused it\n")
+	screen.ShowOutcome(report.String())
+	page = screen.Page(80, 12)
+	if !strings.Contains(page, "/work/app/out/00") || strings.Contains(page, "Git rule") || strings.Contains(page, "/work/stuck") {
+		t.Fatalf("the outcome did not start at the moved paths:\n%s", page)
+	}
+	if !strings.Contains(page, "q quit") {
+		t.Fatalf("quit left the outcome:\n%s", page)
+	}
+	for range 80 {
+		screen.Press([]byte("j"))
+	}
+	page = screen.Page(80, 12)
+	if !strings.Contains(page, "Git rule") || !strings.Contains(page, "/work/stuck") || !strings.Contains(page, "q quit") {
+		t.Fatalf("j did not reach the Skip and the failure:\n%s", page)
+	}
+	for range 80 {
+		screen.Press([]byte("k"))
+	}
+	page = screen.Page(80, 12)
+	if !strings.Contains(page, "/work/app/out/00") || strings.Contains(page, "/work/stuck") {
+		t.Fatalf("k did not return to the first moved path:\n%s", page)
 	}
 }
 

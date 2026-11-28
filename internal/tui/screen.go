@@ -14,8 +14,8 @@ import (
 
 const (
 	listKeys    = "j/k move    t tick    u untick    enter review    q quit"
-	reviewKeys  = "y confirm    n back"
-	outcomeKeys = "q quit"
+	reviewKeys  = "j/k move    y confirm    n back"
+	outcomeKeys = "j/k move    q quit"
 )
 
 // Effect is what one key asks the composition root to do. Stay means the
@@ -47,6 +47,7 @@ type Screen struct {
 	picked  map[string]bool
 	mode    mode
 	outcome string
+	focus   int
 }
 
 type kind int
@@ -110,6 +111,7 @@ func (s Screen) Picked() []domain.Candidate {
 func (s *Screen) ShowOutcome(text string) {
 	s.mode = modeOutcome
 	s.outcome = text
+	s.focus = 0
 }
 
 // Decoder turns terminal bytes into keys. An escape sequence that arrives
@@ -170,6 +172,7 @@ func (s *Screen) pressList(key []byte) Effect {
 		return Quit
 	case "\r", "\n":
 		s.mode = modeReview
+		s.focus = 0
 	case "j", "\x1b[B", "\x1bOB":
 		s.move(1)
 	case "k", "\x1b[A", "\x1bOA":
@@ -190,6 +193,10 @@ func (s *Screen) pressReview(key []byte) Effect {
 		s.mode = modeList
 	case "q", "\x03":
 		return Quit
+	case "j", "\x1b[B", "\x1bOB":
+		s.moveFocus(1, len(s.reviewBody()))
+	case "k", "\x1b[A", "\x1bOA":
+		s.moveFocus(-1, len(s.reviewBody()))
 	}
 	return Stay
 }
@@ -198,8 +205,27 @@ func (s *Screen) pressOutcome(key []byte) Effect {
 	switch string(key) {
 	case "q", "\x03":
 		return Quit
+	case "j", "\x1b[B", "\x1bOB":
+		s.moveFocus(1, len(s.outcomeBody()))
+	case "k", "\x1b[A", "\x1bOA":
+		s.moveFocus(-1, len(s.outcomeBody()))
 	}
 	return Stay
+}
+
+func (s *Screen) moveFocus(delta, n int) {
+	if n < 1 {
+		s.focus = 0
+		return
+	}
+	next := s.focus + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= n {
+		next = n - 1
+	}
+	s.focus = next
 }
 
 type drawn struct {
@@ -227,7 +253,8 @@ const notRead = "Not read, so the list may be short and a Size may be low"
 
 func (s Screen) Page(width, height int) string {
 	if s.mode != modeList {
-		return fitTail(s.view(), width, height)
+		body, foot := s.parts()
+		return pageAround(body, foot, s.focus, width, height)
 	}
 	if width < 1 || height < 1 {
 		return s.Text()
@@ -312,53 +339,80 @@ func (s Screen) chromeLines() []drawn {
 	}
 }
 
+func (s Screen) parts() (body, foot []drawn) {
+	if s.mode == modeOutcome {
+		return s.outcomeBody(), s.outcomeFoot()
+	}
+	return s.reviewBody(), s.reviewFoot()
+}
+
 func (s Screen) reviewLines() []drawn {
+	return append(s.reviewBody(), s.reviewFoot()...)
+}
+
+func (s Screen) reviewBody() []drawn {
 	rows := s.Picked()
 	lines := []drawn{{text: "Will be moved to trash"}}
 	if len(rows) == 0 {
-		lines = append(lines, drawn{text: "Nothing."})
-	} else {
-		var buf strings.Builder
-		columns := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(columns, "SIZE\tPATH")
-		for _, c := range rows {
-			_, _ = fmt.Fprintf(columns, "%s\t%s\n", human(c.Size), c.Path)
-		}
-		_ = columns.Flush()
-		for _, text := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
-			lines = append(lines, drawn{text: text})
-		}
+		return append(lines, drawn{text: "Nothing."})
 	}
+	var buf strings.Builder
+	columns := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(columns, "SIZE\tPATH")
+	for _, c := range rows {
+		_, _ = fmt.Fprintf(columns, "%s\t%s\n", human(c.Size), c.Path)
+	}
+	_ = columns.Flush()
+	for _, text := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		lines = append(lines, drawn{text: text})
+	}
+	return lines
+}
+
+func (s Screen) reviewFoot() []drawn {
 	n, size := s.pickedCount()
-	return append(lines,
-		drawn{kind: gap},
-		drawn{text: fmt.Sprintf("%s, %s will be moved to trash", counted(n), human(size)), keep: true},
-		drawn{text: reviewKeys},
-	)
+	return []drawn{
+		{kind: gap},
+		{text: fmt.Sprintf("%s, %s will be moved to trash", counted(n), human(size)), keep: true},
+		{text: reviewKeys},
+	}
 }
 
 func (s Screen) outcomeLines() []drawn {
-	text := strings.TrimRight(s.outcome, "\n")
-	var lines []drawn
-	if text == "" {
-		lines = append(lines, drawn{text: "Nothing."})
-	} else {
-		for _, line := range strings.Split(text, "\n") {
-			lines = append(lines, drawn{text: line})
-		}
-	}
-	return append(lines, drawn{kind: gap}, drawn{text: outcomeKeys, keep: true})
+	return append(s.outcomeBody(), s.outcomeFoot()...)
 }
 
-func fitTail(lines []drawn, width, height int) string {
+func (s Screen) outcomeBody() []drawn {
+	text := strings.TrimRight(s.outcome, "\n")
+	if text == "" {
+		return []drawn{{text: "Nothing."}}
+	}
+	var lines []drawn
+	for _, line := range strings.Split(text, "\n") {
+		lines = append(lines, drawn{text: line})
+	}
+	return lines
+}
+
+func (s Screen) outcomeFoot() []drawn {
+	return []drawn{{kind: gap}, {text: outcomeKeys, keep: true}}
+}
+
+func pageAround(body, footer []drawn, focus, width, height int) string {
 	if width < 1 || height < 1 {
-		return joinDrawn(lines)
+		return joinDrawn(append(append([]drawn{}, body...), footer...))
 	}
-	text := clipLines(texts(lines), width)
-	if len(text) > height {
-		text = text[len(text)-height:]
+	foot := footer
+	if len(foot) >= height && height >= 2 {
+		foot = foot[len(foot)-1:]
 	}
-	return strings.Join(text, "\n") + "\n"
+	budget := height - len(foot)
+	if budget < 0 {
+		budget = 0
+	}
+	window := clipLines(texts(windowAround(body, focus, budget)), width)
+	parts := append(window, clipLines(texts(foot), width)...)
+	return strings.Join(parts, "\n") + "\n"
 }
 
 func (s Screen) diagLines() []drawn {

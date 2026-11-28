@@ -22,11 +22,13 @@ ticks, `u` unticks and `q` quits. A Candidate that holds an Ignore path
 is left off the list, because a Clean would remove that path.
 
 Enter opens a review of the ticked Candidates that will be moved to the
-trash, and the total. Nothing is moved yet. `n` returns to the list and
+trash, and the total. Nothing is moved yet. `j` and `k` move through
+that review, and the total stays on screen. `n` returns to the list and
 the ticks stay. `y` confirms. Confirming writes the Plan and runs the
 same Clean as `sweep clean --plan`, re-checking the Git rule, the Root
 rule and the Fingerprint rule. The screen then shows what was moved to
-the trash, each Skip with its rule, and each failure. Trashed space is
+the trash, each Skip with its rule, and each failure. `j` and `k` move
+through that report, and quit stays on screen. Trashed space is
 described as moved to the trash. `q` leaves that screen. Quitting from
 the list, or from the review, writes no Plan and removes nothing.
 

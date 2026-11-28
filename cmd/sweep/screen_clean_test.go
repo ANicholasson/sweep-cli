@@ -21,25 +21,30 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 		b.data = filepath.Join(dir, "trash-home")
 	}
 	env := b.commandEnv(t)
-	cache := sharedCache(b.home)
+	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
+	stale, recent := splitByAge(t, key, at)
+	if len(stale) == 0 || len(recent) == 0 {
+		t.Fatalf("stale = %d, recent = %d, want both, from the files' modification times", len(stale), len(recent))
+	}
+	cache := answerCache(t, key, at)
+	want := append(append([]string{}, stale...), cache)
+	var sum int64
+	for _, path := range want {
+		sum += du(t, path)
+	}
 	cliPlan := filepath.Join(t.TempDir(), "plan.json")
 	dry := b.runWith(t, dir, env, "clean", "--dry-run", "--plan", cliPlan, "--pick", cache)
 	if dry.status != 0 || dry.stderr != "" {
 		t.Fatalf("dry run exit %d, stderr %q\n%s", dry.status, dry.stderr, dry.stdout)
 	}
 	planned := decodePlan(t, cliPlan)
-	if len(planned.Candidates) < 2 || !planHolds(t, planned, cache) {
-		t.Fatalf("Plan paths = %v, want the default Pick and %s", planPaths(t, planned), cache)
+	if !sameSet(t, planPaths(t, planned), want) {
+		t.Fatalf("command line Plan paths = %v, want the Stale Candidates and the ticked cache %v", planPaths(t, planned), want)
 	}
-	var sum int64
-	for _, c := range planned.Candidates {
-		sum += du(t, c.Path)
-	}
-	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
-	inPlan := map[string]bool{}
+	inWant := map[string]bool{}
 	for _, c := range key.Candidates {
-		if planHolds(t, planned, at(c.Path)) {
-			inPlan[c.Path] = true
+		if listedIn(t, at(c.Path), want) {
+			inWant[c.Path] = true
 		}
 	}
 	screenPlan := writtenPlan(b)
@@ -49,18 +54,17 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 	session.waitFor(t, "enter review")
 	session.send(t, []byte{'\r'})
 	review := session.waitFor(t, "will be moved to trash")
-	if strings.Contains(review, cache) {
-		t.Fatalf("the review includes the unticked Shared cache:\n%s", review)
-	}
-	for _, c := range planned.Candidates {
-		if sameDir(t, c.Path, cache) {
-			continue
-		}
-		if !strings.Contains(review, c.Path) {
-			t.Errorf("the review leaves out %s\n%s", c.Path, review)
+	for _, path := range stale {
+		if !strings.Contains(review, path) {
+			t.Errorf("the review leaves out the Stale Candidate %s\n%s", path, review)
 		}
 	}
-	if !strings.Contains(review, "y confirm    n back") {
+	for _, path := range append(append([]string{}, recent...), cache) {
+		if strings.Contains(review, path) {
+			t.Errorf("the review includes %s, which is not in the default Pick\n%s", path, review)
+		}
+	}
+	if !strings.Contains(review, "j/k move    y confirm    n back") {
 		t.Fatalf("review =\n%s\nwant the confirm keys", review)
 	}
 	session.send(t, []byte("n"))
@@ -77,9 +81,14 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 	}
 	session.send(t, []byte{'\r'})
 	again := session.waitForAll(t, "will be moved to trash", cache)
-	for _, c := range planned.Candidates {
-		if !strings.Contains(again, c.Path) {
-			t.Errorf("the review leaves out %s\n%s", c.Path, again)
+	for _, path := range want {
+		if !strings.Contains(again, path) {
+			t.Errorf("the review leaves out %s\n%s", path, again)
+		}
+	}
+	for _, path := range recent {
+		if strings.Contains(again, path) {
+			t.Errorf("the review includes the recent Candidate %s\n%s", path, again)
 		}
 	}
 	session.send(t, []byte("y"))
@@ -87,13 +96,13 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 	if strings.Contains(strings.ToLower(outcome), "reclaimed") {
 		t.Errorf("trashed space is called reclaimed:\n%s", outcome)
 	}
-	wantSummary := "Moved to trash: " + countPhrase(len(planned.Candidates)) + ", " + shown(sum)
+	wantSummary := "Moved to trash: " + countPhrase(len(want)) + ", " + shown(sum)
 	if !strings.Contains(outcome, wantSummary) {
 		t.Errorf("outcome is\n%s\nwant %s, which du gave", outcome, wantSummary)
 	}
-	for _, c := range planned.Candidates {
-		if !strings.Contains(outcome, c.Path) {
-			t.Errorf("the outcome leaves out %s\n%s", c.Path, outcome)
+	for _, path := range want {
+		if !strings.Contains(outcome, path) {
+			t.Errorf("the outcome leaves out %s\n%s", path, outcome)
 		}
 	}
 	session.send(t, []byte("q"))
@@ -105,23 +114,23 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := os.ReadFile(cliPlan)
+	cli, err := os.ReadFile(cliPlan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("the screen Plan is\n%s\nthe command line Plan is\n%s", got, want)
+	if !bytes.Equal(got, cli) {
+		t.Fatalf("the screen Plan is\n%s\nthe command line Plan is\n%s", got, cli)
 	}
 
 	trashAt := b.data
 	if runtime.GOOS == "darwin" {
 		trashAt = b.home
 	}
-	for _, c := range planned.Candidates {
-		if _, err := os.Lstat(c.Path); !os.IsNotExist(err) {
-			t.Errorf("%s is still in place: %v", c.Path, err)
+	for _, path := range want {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("%s is still in place: %v", path, err)
 		}
-		trashedCopy(t, trashAt, c.Path)
+		trashedCopy(t, trashAt, path)
 	}
 	for _, trap := range key.Traps {
 		if _, err := os.Lstat(at(trap.Path)); err != nil {
@@ -132,7 +141,7 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 		}
 	}
 	for _, c := range key.Candidates {
-		if inPlan[c.Path] {
+		if inWant[c.Path] {
 			continue
 		}
 		path := at(c.Path)
@@ -142,11 +151,32 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 	}
 }
 
-func sharedCache(home string) string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(home, "AppData", "Local", "npm-cache", "_cacache")
+func answerCache(t *testing.T, key answerKey, at func(string) string) string {
+	t.Helper()
+	var rel string
+	for _, c := range key.Candidates {
+		if strings.HasPrefix(c.Path, key.Root+"/") {
+			continue
+		}
+		if rel != "" {
+			t.Fatalf("Candidates outside the Root: %s and %s", rel, c.Path)
+		}
+		rel = c.Path
 	}
-	return filepath.Join(home, ".npm", "_cacache")
+	if rel == "" {
+		t.Fatal("the Answer key has no Shared cache")
+	}
+	return at(rel)
+}
+
+func listedIn(t *testing.T, path string, want []string) bool {
+	t.Helper()
+	for _, w := range want {
+		if sameDir(t, path, w) {
+			return true
+		}
+	}
+	return false
 }
 
 func writtenPlan(b binaries) string {
