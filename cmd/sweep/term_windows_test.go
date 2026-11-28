@@ -37,9 +37,7 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The attribute value is the pseudoconsole handle, the same way the
-	// console sample passes HPCON rather than a pointer to it.
-	if err := attr.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(pc), unsafe.Sizeof(pc)); err != nil {
+	if err := attr.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, pseudoConsolePtr(pc), unsafe.Sizeof(pc)); err != nil {
 		t.Fatal(err)
 	}
 	exe, err := windows.UTF16PtrFromString(bin)
@@ -111,6 +109,12 @@ func startTerminal(t *testing.T, bin, dir string, env []string) *termSession {
 		}
 	}
 	return s
+}
+
+// pseudoConsolePtr is the pseudoconsole handle as the attribute value.
+// UpdateProcThreadAttribute takes that handle, not a pointer to the variable.
+func pseudoConsolePtr(h windows.Handle) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&h))
 }
 
 func windowsEnv(env []string) ([]uint16, error) {

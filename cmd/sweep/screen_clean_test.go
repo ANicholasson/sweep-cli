@@ -126,11 +126,11 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		trashAt = b.home
 	}
-	for _, path := range want {
-		if _, err := os.Lstat(path); !os.IsNotExist(err) {
-			t.Errorf("%s is still in place: %v", path, err)
+	for _, c := range planned.Candidates {
+		if _, err := os.Lstat(c.Path); !os.IsNotExist(err) {
+			t.Errorf("%s is still in place: %v", c.Path, err)
 		}
-		trashedCopy(t, trashAt, path)
+		trashedCopy(t, trashAt, c.Path)
 	}
 	for _, trap := range key.Traps {
 		if _, err := os.Lstat(at(trap.Path)); err != nil {
