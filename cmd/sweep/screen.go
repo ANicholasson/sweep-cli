@@ -12,6 +12,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
+	"github.com/ANicholasson/sweep-cli/internal/domain/clean"
 	"github.com/ANicholasson/sweep-cli/internal/domain/plan"
 	"github.com/ANicholasson/sweep-cli/internal/system/files"
 	"github.com/ANicholasson/sweep-cli/internal/tui"
@@ -148,7 +149,7 @@ func confirmClean(found []domain.Candidate, ignore []string, built plan.Plan) (i
 		return code, spoken(err)
 	}
 	var out, errOut bytes.Buffer
-	code := actOnPlan(dest, &out, &errOut)
+	code := actOnPlan(dest, clean.ToTrash, &out, &errOut)
 	return code, out.String() + errOut.String()
 }
 
