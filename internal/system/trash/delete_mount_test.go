@@ -3,6 +3,7 @@
 package trash
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,13 +15,7 @@ import (
 
 func TestDeleteDoesNotDescendIntoAnotherDevice(t *testing.T) {
 	if os.Getenv("SWEEP_DELETE_MOUNT") != "1" {
-		cmd := exec.Command("unshare", "--user", "--map-root-user", "--mount",
-			os.Args[0], "-test.run=^TestDeleteDoesNotDescendIntoAnotherDevice$", "-test.count=1")
-		cmd.Env = append(os.Environ(), "SWEEP_DELETE_MOUNT=1")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("mount namespace: %v\n%s", err, out)
-		}
+		runInMountNamespace(t)
 		return
 	}
 
@@ -52,5 +47,32 @@ func TestDeleteDoesNotDescendIntoAnotherDevice(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("Delete returned after descending onto another device")
+	}
+}
+
+// runInMountNamespace runs this test where a bind mount is permitted. An
+// unprivileged user namespace is tried first. A runner that refuses the
+// uid map runs the same test through sudo, which can make a mount namespace.
+// Either way the test fails when Delete enters the other device.
+func runInMountNamespace(t *testing.T) {
+	t.Helper()
+	bin, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	testArgs := []string{bin, "-test.run=^TestDeleteDoesNotDescendIntoAnotherDevice$", "-test.count=1"}
+	cmd := exec.Command("unshare", append([]string{"--user", "--map-root-user", "--mount"}, testArgs...)...)
+	cmd.Env = append(os.Environ(), "SWEEP_DELETE_MOUNT=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return
+	}
+	if !bytes.Contains(out, []byte("uid_map")) {
+		t.Fatalf("mount namespace: %v\n%s", err, out)
+	}
+	cmd = exec.Command("sudo", append([]string{"-n", "env", "SWEEP_DELETE_MOUNT=1", "unshare", "--mount"}, testArgs...)...)
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("mount namespace: %v\n%s", err, out)
 	}
 }
