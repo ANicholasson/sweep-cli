@@ -36,7 +36,7 @@ func TestTheScreenStartsFromTheDefaultPick(t *testing.T) {
 		t.Errorf("a Reason other than the highlighted Candidate's is visible:\n%s", text)
 	}
 	assertTotal(t, text, "1 Candidate, 1.0 KiB picked")
-	if !strings.Contains(text, "j/k move    t tick    u untick    q quit\n") {
+	if !strings.Contains(text, "j/k move    t tick    u untick    enter review    q quit\n") {
 		t.Errorf("the keys are missing:\n%s", text)
 	}
 	docker := lineContaining(t, text, "Docker data")
@@ -44,10 +44,10 @@ func TestTheScreenStartsFromTheDefaultPick(t *testing.T) {
 		t.Errorf("docker line = %q, want the size, reported only, and no tick", docker)
 	}
 
-	if screen.Press([]byte("k")) || screen.Text() != text {
+	if screen.Press([]byte("k")) == tui.Quit || screen.Text() != text {
 		t.Fatalf("k at the top moved:\n%s", screen.Text())
 	}
-	if screen.Press([]byte("t")) || screen.Text() != text {
+	if screen.Press([]byte("t")) == tui.Quit || screen.Text() != text {
 		t.Fatalf("ticking the highlighted Candidate again changed the drawing:\n%s", screen.Text())
 	}
 
@@ -60,7 +60,7 @@ func TestTheScreenStartsFromTheDefaultPick(t *testing.T) {
 	}
 	assertTotal(t, moved, "1 Candidate, 1.0 KiB picked")
 
-	if quit := screen.Press([]byte("t")); quit {
+	if screen.Press([]byte("t")) == tui.Quit {
 		t.Fatal("t quit")
 	}
 	ticked := screen.Text()
@@ -76,10 +76,10 @@ func TestTheScreenStartsFromTheDefaultPick(t *testing.T) {
 	if !strings.Contains(beforeDocker, "> Docker data") {
 		t.Fatalf("Docker data is not highlighted:\n%s", beforeDocker)
 	}
-	if screen.Press([]byte("t")) || screen.Press([]byte("u")) || screen.Text() != beforeDocker {
+	if screen.Press([]byte("t")) == tui.Quit || screen.Press([]byte("u")) == tui.Quit || screen.Text() != beforeDocker {
 		t.Fatalf("Docker data accepted a tick:\n%s", screen.Text())
 	}
-	if screen.Press([]byte("j")) || screen.Text() != beforeDocker {
+	if screen.Press([]byte("j")) == tui.Quit || screen.Text() != beforeDocker {
 		t.Fatalf("j past the end moved:\n%s", screen.Text())
 	}
 
@@ -88,7 +88,7 @@ func TestTheScreenStartsFromTheDefaultPick(t *testing.T) {
 		t.Fatalf("up did not move back to the Shared cache:\n%s", screen.Text())
 	}
 	beforeQuit := screen.Text()
-	if !screen.Press([]byte("q")) {
+	if screen.Press([]byte("q")) != tui.Quit {
 		t.Fatal("q did not quit")
 	}
 	if screen.Text() != beforeQuit {
@@ -105,7 +105,7 @@ func TestCtrlCQuitsWithoutChangingThePick(t *testing.T) {
 	if !strings.Contains(before, "Docker data  docker is not running") {
 		t.Fatalf("unread Docker data reads as:\n%s", before)
 	}
-	if !screen.Press([]byte{0x03}) {
+	if screen.Press([]byte{0x03}) != tui.Quit {
 		t.Fatal("ctrl-c did not quit")
 	}
 	if screen.Text() != before {
@@ -123,7 +123,7 @@ func TestAnEmptyScanStillShowsDockerDataAndTheKeys(t *testing.T) {
 		t.Fatalf("Docker data is not highlighted:\n%s", text)
 	}
 	assertTotal(t, text, "0 Candidates, 0 B picked")
-	if !strings.Contains(text, "j/k move    t tick    u untick    q quit\n") {
+	if !strings.Contains(text, "j/k move    t tick    u untick    enter review    q quit\n") {
 		t.Errorf("the keys are missing:\n%s", text)
 	}
 }
@@ -302,7 +302,7 @@ func TestDockerStaysHighlightedOnAShortPane(t *testing.T) {
 		Candidates: []domain.Candidate{candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)},
 		DockerData: domain.Reported(0),
 	})
-	if screen.Press([]byte("j")) {
+	if screen.Press([]byte("j")) == tui.Quit {
 		t.Fatal("j quit")
 	}
 	page := screen.Page(80, 7)
@@ -360,7 +360,7 @@ func TestAnUnfinishedEscapeIsKeptForTheNextRead(t *testing.T) {
 
 func apply(keys *tui.Decoder, screen *tui.Screen, chunk []byte) bool {
 	for _, key := range keys.Push(chunk) {
-		if screen.Press(key) {
+		if screen.Press(key) == tui.Quit {
 			return true
 		}
 	}
@@ -370,8 +370,109 @@ func apply(keys *tui.Decoder, screen *tui.Screen, chunk []byte) bool {
 func TestAnUnknownKeyChangesNothing(t *testing.T) {
 	screen := tui.New(scan.Result{DockerData: domain.Reported(0)})
 	before := screen.Text()
-	if screen.Press([]byte("x")) || screen.Press([]byte{0x1b}) || screen.Text() != before {
+	if screen.Press([]byte("x")) == tui.Quit || screen.Press([]byte{0x1b}) == tui.Quit || screen.Text() != before {
 		t.Fatal("an unknown key changed the drawing or quit")
+	}
+}
+
+func TestEnterReviewsThePlanAndCancelKeepsTheTicks(t *testing.T) {
+	stale := candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)
+	recent := candidate("/work/app", "/work/app/dist", domain.BuildOutput, "The compiler writes it again.", 2048, time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC), false, false)
+	cache := candidate("", "/home/ada/.npm/_cacache", domain.Cache, "npm downloads again.", 4096, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), true, true)
+	screen := tui.New(scan.Result{Candidates: []domain.Candidate{stale, cache, recent}, DockerData: domain.Reported(0)})
+	list := screen.Text()
+
+	if screen.Press([]byte("y")) != tui.Stay || screen.Text() != list {
+		t.Fatal("y on the list confirmed or changed the drawing")
+	}
+	if screen.Press([]byte("\r")) != tui.Stay {
+		t.Fatal("enter confirmed or quit")
+	}
+	review := screen.Text()
+	if !strings.Contains(review, "Will be moved to trash\n") || !strings.Contains(review, stale.Path) {
+		t.Fatalf("review =\n%s\nwant the ticked Candidate", review)
+	}
+	if strings.Contains(review, recent.Path) || strings.Contains(review, cache.Path) || strings.Contains(review, "Docker") {
+		t.Fatalf("review lists something that is not ticked:\n%s", review)
+	}
+	if !strings.Contains(review, "1 Candidate, 1.0 KiB will be moved to trash\n") || !strings.Contains(review, "y confirm    n back\n") {
+		t.Fatalf("review =\n%s\nwant the total and the confirm keys", review)
+	}
+	if strings.Contains(strings.ToLower(review), "reclaimed") {
+		t.Fatalf("review calls the space reclaimed:\n%s", review)
+	}
+	if screen.Press([]byte("\r")) != tui.Stay || screen.Text() != review {
+		t.Fatal("enter on the review confirmed")
+	}
+	if screen.Press([]byte("n")) != tui.Stay {
+		t.Fatal("n quit or confirmed")
+	}
+	if screen.Text() != list {
+		t.Fatalf("cancel did not restore the list:\n%s", screen.Text())
+	}
+
+	screen.Press([]byte("u"))
+	screen.Press([]byte("j"))
+	screen.Press([]byte("t"))
+	screen.Press([]byte("j"))
+	screen.Press([]byte("t"))
+	screen.Press([]byte("\n"))
+	again := screen.Text()
+	if !strings.Contains(again, cache.Path) || strings.Contains(again, stale.Path) || !strings.Contains(again, recent.Path) {
+		t.Fatalf("review after reticking =\n%s", again)
+	}
+	var paths []string
+	for _, c := range screen.Picked() {
+		paths = append(paths, c.Path)
+	}
+	if strings.Join(paths, " ") != cache.Path+" "+recent.Path {
+		t.Fatalf("Picked = %v, want scan order %s then %s", paths, cache.Path, recent.Path)
+	}
+	screen.Press([]byte("n"))
+	back := screen.Text()
+	assertRow(t, back, cache.Path, "> [x]", "4.0 KiB", "Cache", "2026-08-01 00:00:00Z")
+	assertRow(t, back, "node_modules", "  [ ]", "1.0 KiB", "Dependencies", "2026-09-01 00:00:00Z")
+	assertRow(t, back, "dist", "  [x]", "2.0 KiB", "Build output", "2026-11-20 00:00:00Z")
+}
+
+func TestConfirmShowsTheCleanReport(t *testing.T) {
+	stale := candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)
+	screen := tui.New(scan.Result{Candidates: []domain.Candidate{stale}, DockerData: domain.Reported(0)})
+	screen.Press([]byte("\r"))
+	if screen.Press([]byte("y")) != tui.Confirm {
+		t.Fatal("y did not confirm")
+	}
+	const report = "Moved to trash\nSIZE  PATH\n1.0 KiB  /work/app/node_modules\n\nSkipped\nNothing.\n\nFailed\nNothing.\n\nMoved to trash: 1 Candidate, 1.0 KiB\nSkipped nothing\nFailed nothing\n"
+	screen.ShowOutcome(report)
+	text := screen.Text()
+	for _, want := range []string{"Moved to trash", stale.Path, "Skipped", "Failed", "q quit\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("outcome =\n%s\nwant %q", text, want)
+		}
+	}
+	if strings.Contains(strings.ToLower(text), "reclaimed") {
+		t.Errorf("outcome calls the space reclaimed:\n%s", text)
+	}
+	if screen.Press([]byte("y")) != tui.Stay || screen.Press([]byte("t")) != tui.Stay {
+		t.Fatal("the outcome accepted another clean")
+	}
+	short := screen.Page(40, 5)
+	if strings.Contains(short, "SIZE") || !strings.Contains(short, "Moved to trash:") || !strings.Contains(short, "q quit\n") {
+		t.Fatalf("a short outcome hid the summary:\n%s", short)
+	}
+	if screen.Press([]byte("q")) != tui.Quit {
+		t.Fatal("q did not leave the outcome")
+	}
+}
+
+func TestQuittingTheReviewWritesNothing(t *testing.T) {
+	screen := tui.New(scan.Result{
+		Candidates: []domain.Candidate{candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)},
+		DockerData: domain.Reported(0),
+	})
+	screen.Press([]byte("\r"))
+	if screen.Press([]byte("q")) != tui.Quit {
+		t.Fatal("q on the review did not quit")
 	}
 }
 

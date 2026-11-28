@@ -18,14 +18,28 @@ ticked. Shared caches are in their own section and start unticked. Docker
 data is shown on its own line and cannot be ticked. The Reason for the
 highlighted Candidate is shown. A total of how many Candidates and how
 much Size are picked updates with every tick. `j` and `k` move, `t`
-ticks, `u` unticks and `q` quits. Quitting changes nothing: no Plan is
-written and nothing is removed. When there is no interactive terminal,
-sweep says so and points at `sweep scan`.
+ticks, `u` unticks and `q` quits. A Candidate that holds an Ignore path
+is left off the list, because a Clean would remove that path.
 
-The exit status is 0 when the user quits, 1 when the terminal cannot be
-read or the drawing cannot be written, and 2 when there is no interactive
-terminal, the configuration file is rejected, or a Root is not a
-directory, in which case the screen does not open.
+Enter opens a review of the ticked Candidates that will be moved to the
+trash, and the total. Nothing is moved yet. `n` returns to the list and
+the ticks stay. `y` confirms. Confirming writes the Plan and runs the
+same Clean as `sweep clean --plan`, re-checking the Git rule, the Root
+rule and the Fingerprint rule. The screen then shows what was moved to
+the trash, each Skip with its rule, and each failure. Trashed space is
+described as moved to the trash. `q` leaves that screen. Quitting from
+the list, or from the review, writes no Plan and removes nothing.
+
+When there is no interactive terminal, sweep says so and points at
+`sweep scan`.
+
+The exit status is 0 when the user quits without confirming, or when
+every Candidate in the confirmed Plan was moved. It is 1 when the
+terminal cannot be read or the drawing cannot be written, or when a
+confirmed Clean skipped or could not move a Candidate. It is 2 when
+there is no interactive terminal, the configuration file is rejected, or
+a Root is not a directory, in which case the screen does not open, and
+when the Plan cannot be written.
 
     sweep scan [--json] [--no-shared-caches] [Root...]
 

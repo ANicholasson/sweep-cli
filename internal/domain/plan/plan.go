@@ -144,6 +144,22 @@ func Build(files scan.Files, result scan.Result, pick Pick) (Plan, []Choice, err
 	return Plan{Roots: append([]domain.Root(nil), result.Roots...), Picked: picked}, choices, nil
 }
 
+// Record is the Plan for candidates, in that order, measured now. Roots
+// are copied. The screen records the Candidates the user ticked. The
+// command line records the Candidates a Pick chose. The same Candidates
+// in the same order are the same Plan.
+func Record(files scan.Files, roots []domain.Root, candidates []domain.Candidate) (Plan, error) {
+	picked := make([]Picked, 0, len(candidates))
+	for _, c := range candidates {
+		measured, err := FingerprintOf(files, c.Path)
+		if err != nil {
+			return Plan{}, fmt.Errorf("%s: %w", c.Path, err)
+		}
+		picked = append(picked, Picked{Path: c.Path, Fingerprint: measured})
+	}
+	return Plan{Roots: append([]domain.Root(nil), roots...), Picked: picked}, nil
+}
+
 func decide(c domain.Candidate, named bool, pick Pick, staleAfter time.Duration) (bool, string) {
 	if named {
 		return true, "named with --pick"

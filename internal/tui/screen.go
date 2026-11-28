@@ -12,14 +12,41 @@ import (
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 )
 
-const keys = "j/k move    t tick    u untick    q quit"
+const (
+	listKeys    = "j/k move    t tick    u untick    enter review    q quit"
+	reviewKeys  = "y confirm    n back"
+	outcomeKeys = "q quit"
+)
+
+// Effect is what one key asks the composition root to do. Stay means the
+// screen only changed its drawing. Quit leaves without a Clean. Confirm
+// asks for the same Clean as the command line, and the screen waits.
+type Effect uint8
+
+const (
+	Stay Effect = iota
+	Quit
+	Confirm
+)
+
+type mode uint8
+
+const (
+	modeList mode = iota
+	modeReview
+	modeOutcome
+)
 
 type Screen struct {
-	lines  []line
-	choose []int
-	at     int
-	docker domain.DockerData
-	unread []scan.Unreadable
+	lines   []line
+	choose  []int
+	at      int
+	docker  domain.DockerData
+	unread  []scan.Unreadable
+	order   []domain.Candidate
+	picked  map[string]bool
+	mode    mode
+	outcome string
 }
 
 type kind int
@@ -35,10 +62,15 @@ type line struct {
 	kind      kind
 	heading   string
 	candidate domain.Candidate
-	picked    bool
 }
 
 func New(result scan.Result) Screen {
+	picked := map[string]bool{}
+	for _, c := range result.Candidates {
+		if plan.StartsPicked(c) {
+			picked[c.Path] = true
+		}
+	}
 	var lines []line
 	var choose []int
 	if len(result.Candidates) == 0 {
@@ -48,12 +80,36 @@ func New(result scan.Result) Screen {
 		lines = append(lines, line{kind: heading, heading: g.heading})
 		for _, c := range g.candidates {
 			choose = append(choose, len(lines))
-			lines = append(lines, line{kind: candidate, candidate: c, picked: plan.StartsPicked(c)})
+			lines = append(lines, line{kind: candidate, candidate: c})
 		}
 	}
 	choose = append(choose, len(lines))
 	lines = append(lines, line{kind: docker})
-	return Screen{lines: lines, choose: choose, docker: result.DockerData, unread: result.Unreadable}
+	return Screen{
+		lines:  lines,
+		choose: choose,
+		docker: result.DockerData,
+		unread: result.Unreadable,
+		order:  append([]domain.Candidate(nil), result.Candidates...),
+		picked: picked,
+	}
+}
+
+// Picked is the ticked Candidates in Scan order. That is the order a Plan
+// records them.
+func (s Screen) Picked() []domain.Candidate {
+	var out []domain.Candidate
+	for _, c := range s.order {
+		if s.picked[c.Path] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (s *Screen) ShowOutcome(text string) {
+	s.mode = modeOutcome
+	s.outcome = text
 }
 
 // Decoder turns terminal bytes into keys. An escape sequence that arrives
@@ -97,10 +153,23 @@ func takeKey(b []byte) (key, rest []byte, ok bool) {
 	return []byte{b[0]}, b[1:], true
 }
 
-func (s *Screen) Press(key []byte) bool {
+func (s *Screen) Press(key []byte) Effect {
+	switch s.mode {
+	case modeReview:
+		return s.pressReview(key)
+	case modeOutcome:
+		return s.pressOutcome(key)
+	default:
+		return s.pressList(key)
+	}
+}
+
+func (s *Screen) pressList(key []byte) Effect {
 	switch string(key) {
 	case "q", "\x03":
-		return true
+		return Quit
+	case "\r", "\n":
+		s.mode = modeReview
 	case "j", "\x1b[B", "\x1bOB":
 		s.move(1)
 	case "k", "\x1b[A", "\x1bOA":
@@ -110,7 +179,27 @@ func (s *Screen) Press(key []byte) bool {
 	case "u":
 		s.pick(false)
 	}
-	return false
+	return Stay
+}
+
+func (s *Screen) pressReview(key []byte) Effect {
+	switch string(key) {
+	case "y":
+		return Confirm
+	case "n":
+		s.mode = modeList
+	case "q", "\x03":
+		return Quit
+	}
+	return Stay
+}
+
+func (s *Screen) pressOutcome(key []byte) Effect {
+	switch string(key) {
+	case "q", "\x03":
+		return Quit
+	}
+	return Stay
 }
 
 type drawn struct {
@@ -120,12 +209,26 @@ type drawn struct {
 }
 
 func (s Screen) Text() string {
-	return joinDrawn(append(append(s.bodyLines(), s.chromeLines()...), s.diagLines()...))
+	return joinDrawn(s.view())
+}
+
+func (s Screen) view() []drawn {
+	switch s.mode {
+	case modeReview:
+		return s.reviewLines()
+	case modeOutcome:
+		return s.outcomeLines()
+	default:
+		return append(append(s.bodyLines(), s.chromeLines()...), s.diagLines()...)
+	}
 }
 
 const notRead = "Not read, so the list may be short and a Size may be low"
 
 func (s Screen) Page(width, height int) string {
+	if s.mode != modeList {
+		return fitTail(s.view(), width, height)
+	}
 	if width < 1 || height < 1 {
 		return s.Text()
 	}
@@ -195,7 +298,7 @@ func (s Screen) bodyLines() []drawn {
 }
 
 func (s Screen) chromeLines() []drawn {
-	n, size := s.picked()
+	n, size := s.pickedCount()
 	onDocker := s.lines[s.choose[s.at]].kind == docker
 	return []drawn{
 		{kind: gap},
@@ -205,8 +308,57 @@ func (s Screen) chromeLines() []drawn {
 		{text: s.reason()},
 		{kind: gap},
 		{text: fmt.Sprintf("%s, %s picked", counted(n), human(size)), keep: true},
-		{text: keys},
+		{text: listKeys},
 	}
+}
+
+func (s Screen) reviewLines() []drawn {
+	rows := s.Picked()
+	lines := []drawn{{text: "Will be moved to trash"}}
+	if len(rows) == 0 {
+		lines = append(lines, drawn{text: "Nothing."})
+	} else {
+		var buf strings.Builder
+		columns := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(columns, "SIZE\tPATH")
+		for _, c := range rows {
+			_, _ = fmt.Fprintf(columns, "%s\t%s\n", human(c.Size), c.Path)
+		}
+		_ = columns.Flush()
+		for _, text := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+			lines = append(lines, drawn{text: text})
+		}
+	}
+	n, size := s.pickedCount()
+	return append(lines,
+		drawn{kind: gap},
+		drawn{text: fmt.Sprintf("%s, %s will be moved to trash", counted(n), human(size)), keep: true},
+		drawn{text: reviewKeys},
+	)
+}
+
+func (s Screen) outcomeLines() []drawn {
+	text := strings.TrimRight(s.outcome, "\n")
+	var lines []drawn
+	if text == "" {
+		lines = append(lines, drawn{text: "Nothing."})
+	} else {
+		for _, line := range strings.Split(text, "\n") {
+			lines = append(lines, drawn{text: line})
+		}
+	}
+	return append(lines, drawn{kind: gap}, drawn{text: outcomeKeys, keep: true})
+}
+
+func fitTail(lines []drawn, width, height int) string {
+	if width < 1 || height < 1 {
+		return joinDrawn(lines)
+	}
+	text := clipLines(texts(lines), width)
+	if len(text) > height {
+		text = text[len(text)-height:]
+	}
+	return strings.Join(text, "\n") + "\n"
 }
 
 func (s Screen) diagLines() []drawn {
@@ -354,12 +506,16 @@ func (s *Screen) move(delta int) {
 	s.at = next
 }
 
-func (s *Screen) pick(picked bool) {
+func (s *Screen) pick(on bool) {
 	row := s.lines[s.choose[s.at]]
 	if row.kind != candidate {
 		return
 	}
-	s.lines[s.choose[s.at]].picked = picked
+	if on {
+		s.picked[row.candidate.Path] = true
+		return
+	}
+	delete(s.picked, row.candidate.Path)
 }
 
 func (s Screen) mark(index int) string {
@@ -381,13 +537,13 @@ func (s Screen) reason() string {
 	return string(row.candidate.Rule.Reason)
 }
 
-func (s Screen) picked() (int, domain.Size) {
+func (s Screen) pickedCount() (int, domain.Size) {
 	var n int
 	var size domain.Size
-	for _, row := range s.lines {
-		if row.kind == candidate && row.picked {
+	for _, c := range s.order {
+		if s.picked[c.Path] {
 			n++
-			size += row.candidate.Size
+			size += c.Size
 		}
 	}
 	return n, size
@@ -412,7 +568,7 @@ func (s Screen) sections() []section {
 			out = append(out, section{heading: row.heading})
 		case candidate:
 			n := len(out) - 1
-			out[n].rows = append(out[n].rows, shown{index: i, candidate: row.candidate, picked: row.picked})
+			out[n].rows = append(out[n].rows, shown{index: i, candidate: row.candidate, picked: s.picked[row.candidate.Path]})
 		}
 	}
 	return out
