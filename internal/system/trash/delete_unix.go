@@ -43,6 +43,9 @@ func removeName(dirfd int, name string) error {
 		return &os.PathError{Op: "delete", Path: name, Err: err}
 	}
 	defer func() { _ = syscall.Close(child) }()
+	if err := sameDevice(dirfd, child); err != nil {
+		return &os.PathError{Op: "delete", Path: name, Err: err}
+	}
 	names, rerr := namesOf(child)
 	if rerr != nil {
 		return rerr
@@ -57,6 +60,20 @@ func removeName(dirfd int, name string) error {
 	}
 	if err := unix.Unlinkat(dirfd, name, unix.AT_REMOVEDIR); err != nil {
 		return &os.PathError{Op: "delete", Path: name, Err: err}
+	}
+	return nil
+}
+
+func sameDevice(parent, child int) error {
+	var ps, cs unix.Stat_t
+	if err := unix.Fstat(parent, &ps); err != nil {
+		return err
+	}
+	if err := unix.Fstat(child, &cs); err != nil {
+		return err
+	}
+	if ps.Dev != cs.Dev {
+		return syscall.EXDEV
 	}
 	return nil
 }
