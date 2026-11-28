@@ -3,7 +3,6 @@
 package trash
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -41,10 +40,7 @@ func removeName(dirfd int, name string) error {
 	}
 	child, oerr := openChild(dirfd, name)
 	if oerr != nil {
-		if errors.Is(oerr, syscall.EXDEV) {
-			return &os.PathError{Op: "delete", Path: name, Err: syscall.EXDEV}
-		}
-		return &os.PathError{Op: "delete", Path: name, Err: err}
+		return &os.PathError{Op: "delete", Path: name, Err: oerr}
 	}
 	defer func() { _ = syscall.Close(child) }()
 	names, rerr := namesOf(child)

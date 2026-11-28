@@ -96,6 +96,61 @@ func TestDeleteDoesNotDescendIntoASameFilesystemBindMount(t *testing.T) {
 	}
 }
 
+func TestMountIDOpenRefusesASameFilesystemBindMount(t *testing.T) {
+	if !inMountNamespace(t) {
+		return
+	}
+
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	candidate := filepath.Join(root, "node_modules")
+	mountPoint := filepath.Join(candidate, "mnt")
+	plain := filepath.Join(candidate, "plain")
+	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "elsewhere")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(outside, "precious.txt")
+	if err := os.WriteFile(secret, []byte("precious\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mount(outside, mountPoint, "", unix.MS_BIND, ""); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Unmount(mountPoint, unix.MNT_DETACH) }()
+
+	parent, err := unix.Open(candidate, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(parent) }()
+
+	// This kernel has openat2, so Delete does not take this path. The path is
+	// what runs when openat2 returns ENOSYS or EPERM.
+	fd, err := openChildByMountID(parent, "mnt")
+	if fd >= 0 {
+		_ = unix.Close(fd)
+	}
+	if !errors.Is(err, syscall.EXDEV) {
+		t.Fatalf("open = %v, want a cross-device error", err)
+	}
+	got, rerr := os.ReadFile(secret)
+	if rerr != nil || string(got) != "precious\n" {
+		t.Fatalf("the bind mount was removed: %q, %v", got, rerr)
+	}
+	plainfd, err := openChildByMountID(parent, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unix.Close(plainfd)
+}
+
 // inMountNamespace reports whether this process may bind-mount. The parent
 // runs the test again where a mount is permitted and does not run the body.
 // An unprivileged user namespace is tried first. A runner that refuses the
