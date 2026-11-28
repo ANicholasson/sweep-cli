@@ -35,7 +35,7 @@ func TestDeleteDoesNotDescendIntoAnotherDevice(t *testing.T) {
 	if err := os.MkdirAll(outside, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(outside)
+	defer func() { _ = os.RemoveAll(outside) }()
 	secret := filepath.Join(outside, "precious.txt")
 	if err := os.WriteFile(secret, []byte("precious\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestDeleteDoesNotDescendIntoAnotherDevice(t *testing.T) {
 	if err := unix.Mount(outside, mountPoint, "", unix.MS_BIND, ""); err != nil {
 		t.Fatal(err)
 	}
-	defer unix.Unmount(mountPoint, unix.MNT_DETACH)
+	defer func() { _ = unix.Unmount(mountPoint, unix.MNT_DETACH) }()
 
 	err := (Mover{}).Delete(root, candidate)
 	got, rerr := os.ReadFile(secret)
