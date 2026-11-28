@@ -40,11 +40,11 @@ When there is no interactive terminal, sweep says so and points at
 
 The exit status is 0 when the user quits without confirming, or when
 every Candidate in the confirmed Plan was moved. It is 1 when the
-terminal cannot be read or the drawing cannot be written, or when a
-confirmed Clean skipped or could not move a Candidate. It is 2 when
-there is no interactive terminal, the configuration file is rejected, or
-a Root is not a directory, in which case the screen does not open, and
-when the Plan cannot be written.
+terminal cannot be read or the drawing cannot be written, when a
+confirmed Clean skipped or could not move a Candidate, or when the Plan
+cannot be written. It is 2 when there is no interactive terminal, the
+configuration file is rejected, or a Root is not a directory, in which
+case the screen does not open, and when the Plan path is refused.
 
     sweep scan [--json] [--no-shared-caches] [Root...]
 
