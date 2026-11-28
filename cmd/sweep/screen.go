@@ -13,7 +13,6 @@ import (
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
 	"github.com/ANicholasson/sweep-cli/internal/domain/plan"
-	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 	"github.com/ANicholasson/sweep-cli/internal/system/files"
 	"github.com/ANicholasson/sweep-cli/internal/tui"
 )
@@ -32,8 +31,10 @@ func screenCommand(stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	shown := result
 	shown.Candidates = withoutHeldIgnore(result.Candidates, ignore)
-	code, err := show(in, out, tui.New(shown), func(picked []domain.Candidate) (int, string) {
-		return confirmClean(shown, result.Candidates, ignore, picked)
+	code, err := show(in, out, tui.New(shown), func(picked []domain.Candidate) (plan.Plan, error) {
+		return plan.Record(files.Disk{}, shown.Roots, picked)
+	}, func(built plan.Plan) (int, string) {
+		return confirmClean(result.Candidates, ignore, built)
 	})
 	if err != nil {
 		say(stderr, err)
@@ -57,7 +58,7 @@ func terminalFiles(stdin io.Reader, stdout io.Writer) (*os.File, *os.File, bool)
 	return in, out, true
 }
 
-func show(in, out *os.File, screen tui.Screen, confirm func([]domain.Candidate) (int, string)) (int, error) {
+func show(in, out *os.File, screen tui.Screen, record func([]domain.Candidate) (plan.Plan, error), confirm func(plan.Plan) (int, string)) (int, error) {
 	state, err := term.MakeRaw(int(in.Fd()))
 	if err != nil {
 		return done, err
@@ -73,6 +74,8 @@ func show(in, out *os.File, screen tui.Screen, confirm func([]domain.Candidate) 
 		return done, err
 	}
 	code := done
+	var ready plan.Plan
+	var have bool
 	var keys tui.Decoder
 	buf := make([]byte, 64)
 	for {
@@ -81,9 +84,24 @@ func show(in, out *os.File, screen tui.Screen, confirm func([]domain.Candidate) 
 			switch screen.Press(key) {
 			case tui.Quit:
 				return code, nil
+			case tui.Review:
+				built, recErr := record(screen.Picked())
+				if recErr != nil {
+					have = false
+					code = incomplete
+					screen.ShowOutcome(spoken(recErr))
+					break
+				}
+				ready = built
+				have = true
 			case tui.Confirm:
 				var text string
-				code, text = confirm(screen.Picked())
+				if !have {
+					code = incomplete
+					text = spoken(errors.New("the review has no Plan"))
+				} else {
+					code, text = confirm(ready)
+				}
 				screen.ShowOutcome(text)
 			}
 		}
@@ -98,11 +116,7 @@ func show(in, out *os.File, screen tui.Screen, confirm func([]domain.Candidate) 
 	}
 }
 
-func confirmClean(result scan.Result, found []domain.Candidate, ignore []string, picked []domain.Candidate) (int, string) {
-	built, err := plan.Record(files.Disk{}, result.Roots, picked)
-	if err != nil {
-		return incomplete, spoken(err)
-	}
+func confirmClean(found []domain.Candidate, ignore []string, built plan.Plan) (int, string) {
 	data, err := plan.Marshal(built)
 	if err != nil {
 		return incomplete, spoken(err)

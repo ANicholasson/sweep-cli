@@ -145,7 +145,8 @@ func Build(files scan.Files, result scan.Result, pick Pick) (Plan, []Choice, err
 }
 
 // Record is the Plan for candidates, in that order, measured now. Roots
-// are copied. The screen records the Candidates the user ticked. The
+// are copied. The screen records the ticked Candidates when the review
+// opens, so a later Clean can see a change the review did not show. The
 // command line records the Candidates a Pick chose. The same Candidates
 // in the same order are the same Plan.
 func Record(files scan.Files, roots []domain.Root, candidates []domain.Candidate) (Plan, error) {

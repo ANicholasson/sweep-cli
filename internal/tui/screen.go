@@ -19,13 +19,15 @@ const (
 )
 
 // Effect is what one key asks the composition root to do. Stay means the
-// screen only changed its drawing. Quit leaves without a Clean. Confirm
-// asks for the same Clean as the command line, and the screen waits.
+// screen only changed its drawing. Quit leaves without a Clean. Review
+// means the review opened, so the Plan can be recorded before anything
+// moves. Confirm asks for the Clean of that Plan, and the screen waits.
 type Effect uint8
 
 const (
 	Stay Effect = iota
 	Quit
+	Review
 	Confirm
 )
 
@@ -173,6 +175,7 @@ func (s *Screen) pressList(key []byte) Effect {
 	case "\r", "\n":
 		s.mode = modeReview
 		s.focus = 0
+		return Review
 	case "j", "\x1b[B", "\x1bOB":
 		s.move(1)
 	case "k", "\x1b[A", "\x1bOA":

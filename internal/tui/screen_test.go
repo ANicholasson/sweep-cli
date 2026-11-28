@@ -385,8 +385,8 @@ func TestEnterReviewsThePlanAndCancelKeepsTheTicks(t *testing.T) {
 	if screen.Press([]byte("y")) != tui.Stay || screen.Text() != list {
 		t.Fatal("y on the list confirmed or changed the drawing")
 	}
-	if screen.Press([]byte("\r")) != tui.Stay {
-		t.Fatal("enter confirmed or quit")
+	if screen.Press([]byte("\r")) != tui.Review {
+		t.Fatal("enter did not open the review")
 	}
 	review := screen.Text()
 	if !strings.Contains(review, "Will be moved to trash\n") || !strings.Contains(review, stale.Path) {
@@ -481,8 +481,8 @@ func TestAShortReviewAndOutcomeScrollToEveryLine(t *testing.T) {
 		candidates[i] = candidate("/work/app", fmt.Sprintf("/work/app/out/%02d", i), domain.Cache, "The compiler writes it again.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)
 	}
 	screen := tui.New(scan.Result{Candidates: candidates, DockerData: domain.Reported(0)})
-	if screen.Press([]byte("\r")) != tui.Stay {
-		t.Fatal("enter confirmed")
+	if screen.Press([]byte("\r")) != tui.Review {
+		t.Fatal("enter did not open the review")
 	}
 	page := screen.Page(80, 24)
 	if !strings.Contains(page, "> Will be moved to trash") || !strings.Contains(page, "/work/app/out/00") || strings.Contains(page, "/work/app/out/29") {

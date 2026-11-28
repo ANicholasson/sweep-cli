@@ -151,6 +151,56 @@ func TestTheScreenReviewsAndCleansTheSamePlan(t *testing.T) {
 	}
 }
 
+func TestTheScreenSkipsACandidateChangedAfterTheReview(t *testing.T) {
+	if !movesToTrash() {
+		t.Skip("this operating system has no trash yet, so a Clean removes nothing")
+	}
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	b.home = filepath.Join(dir, "home")
+	b.cache = t.TempDir()
+	if runtime.GOOS != "darwin" {
+		b.data = filepath.Join(dir, "trash-home")
+	}
+	env := b.commandEnv(t)
+	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
+	stale, _ := splitByAge(t, key, at)
+	if len(stale) == 0 {
+		t.Fatal("no Stale Candidate, from the files' modification times")
+	}
+	changed := stale[0]
+
+	session := startTerminal(t, b.sweep, dir, env)
+	t.Cleanup(session.close)
+	session.waitFor(t, "enter review")
+	session.send(t, []byte{'\r'})
+	review := session.waitFor(t, "will be moved to trash")
+	if !strings.Contains(review, changed) {
+		t.Fatalf("the review leaves out %s\n%s", changed, review)
+	}
+	added := filepath.Join(changed, "added.bin")
+	payload := bytes.Repeat([]byte("x"), 64)
+	if err := os.WriteFile(added, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	session.send(t, []byte("y"))
+	outcome := session.waitFor(t, "Fingerprint rule")
+	if !strings.Contains(outcome, changed) {
+		t.Errorf("the Skip leaves out %s\n%s", changed, outcome)
+	}
+	session.send(t, []byte("q"))
+	if code := session.finish(t); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s\n%s", code, session.frame(), session.errText())
+	}
+	body, err := os.ReadFile(added)
+	if err != nil || !bytes.Equal(body, payload) {
+		t.Fatalf("the changed file is %q, %v", body, err)
+	}
+	if _, err := os.Lstat(changed); err != nil {
+		t.Errorf("the changed Candidate is gone: %v", err)
+	}
+}
+
 func answerCache(t *testing.T, key answerKey, at func(string) string) string {
 	t.Helper()
 	var rel string
