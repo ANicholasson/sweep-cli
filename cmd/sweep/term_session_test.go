@@ -36,9 +36,22 @@ func (s *termSession) frame() string {
 	s.mu.Lock()
 	raw := s.raw.String()
 	s.mu.Unlock()
+	return screenFrame(raw)
+}
+
+// screenFrame is the latest screen. A terminal passes the cursor-home and
+// erase through. A pseudoconsole applies the erase and leaves the home, so
+// the bytes after that home are the screen the test is looking at.
+func screenFrame(raw string) string {
 	const clear = "\033[H\033[J"
-	if i := strings.LastIndex(raw, clear); i >= 0 {
-		raw = raw[i+len(clear):]
+	const home = "\033[H"
+	clearAt := strings.LastIndex(raw, clear)
+	homeAt := strings.LastIndex(raw, home)
+	switch {
+	case clearAt >= 0 && clearAt >= homeAt:
+		raw = raw[clearAt+len(clear):]
+	case homeAt >= 0:
+		raw = raw[homeAt+len(home):]
 	}
 	return strings.ReplaceAll(raw, "\r", "")
 }
@@ -140,6 +153,23 @@ func (s *termSession) highlight(t *testing.T, part string) {
 	}
 	if !rowMarked(s.frame(), part, "> ") {
 		t.Fatalf("did not highlight %s\n%s", part, s.frame())
+	}
+}
+
+func TestTheFrameIsTheLatestScreen(t *testing.T) {
+	list := "\033[H\033[JShared caches\n> [ ] cache\n"
+	review := "\033[H\033[JWill be moved to trash\nstale\n"
+	if got := screenFrame(list + review); strings.Contains(got, "cache") || !strings.Contains(got, "stale") {
+		t.Fatalf("frame = %q, want the review", got)
+	}
+	// The erase is already applied, and the home is all that remains of it.
+	rewritten := "Shared caches\n> [ ] cache\n\033[K\033[200C\033[HWill be moved to trash\nstale\n"
+	if got := screenFrame(rewritten); strings.Contains(got, "cache") || !strings.Contains(got, "Will be moved to trash") {
+		t.Fatalf("frame = %q, want the review", got)
+	}
+	both := "\033[H\033[JShared caches\n> [ ] cache\n\033[K\033[HWill be moved to trash\nstale\n"
+	if got := screenFrame(both); strings.Contains(got, "cache") || !strings.Contains(got, "stale") {
+		t.Fatalf("frame = %q, want the review after the later home", got)
 	}
 }
 
