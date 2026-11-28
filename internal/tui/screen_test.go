@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ANicholasson/sweep-cli/internal/domain"
+	"github.com/ANicholasson/sweep-cli/internal/domain/plan"
 	"github.com/ANicholasson/sweep-cli/internal/domain/scan"
 	"github.com/ANicholasson/sweep-cli/internal/tui"
 )
@@ -433,6 +434,28 @@ func TestEnterReviewsThePlanAndCancelKeepsTheTicks(t *testing.T) {
 	assertRow(t, back, cache.Path, "> [x]", "4.0 KiB", "Cache", "2026-08-01 00:00:00Z")
 	assertRow(t, back, "node_modules", "  [ ]", "1.0 KiB", "Dependencies", "2026-09-01 00:00:00Z")
 	assertRow(t, back, "dist", "  [x]", "2.0 KiB", "Build output", "2026-11-20 00:00:00Z")
+}
+
+func TestTheReviewShowsTheRecordedSize(t *testing.T) {
+	stale := candidate("/work/app", "/work/app/node_modules", domain.Dependencies, "It comes back.", 1024, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), true, false)
+	screen := tui.New(scan.Result{Candidates: []domain.Candidate{stale}, DockerData: domain.Reported(0)})
+	if screen.Press([]byte("\r")) != tui.Review {
+		t.Fatal("enter did not open the review")
+	}
+	screen.ShowRecorded(plan.Plan{Picked: []plan.Picked{{
+		Path:        stale.Path,
+		Fingerprint: plan.Fingerprint{Size: 3 << 20},
+	}}})
+	text := screen.Text()
+	if !strings.Contains(text, "3.0 MiB") || !strings.Contains(text, stale.Path) {
+		t.Fatalf("the review does not show the recorded Size:\n%s", text)
+	}
+	if strings.Contains(text, "1.0 KiB") {
+		t.Fatalf("the review still shows the Scan Size:\n%s", text)
+	}
+	if !strings.Contains(text, "1 Candidate, 3.0 MiB will be moved to trash") {
+		t.Fatalf("the total is not the recorded Size:\n%s", text)
+	}
 }
 
 func TestAFailedReviewReturnsToTheListWithTheTicks(t *testing.T) {

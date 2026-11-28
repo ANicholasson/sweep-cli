@@ -94,6 +94,7 @@ func show(in, out *os.File, screen tui.Screen, record func([]domain.Candidate) (
 				screen.ClearNote()
 				ready = built
 				have = true
+				screen.ShowRecorded(built)
 			case tui.Confirm:
 				var text string
 				if !have {

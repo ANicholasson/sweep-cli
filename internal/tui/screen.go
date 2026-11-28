@@ -128,6 +128,20 @@ func (s *Screen) ClearNote() {
 	s.note = ""
 }
 
+// ShowRecorded replaces each ticked Size with the Size the Plan recorded.
+// The review is that Plan, so a change made before Enter is on screen.
+func (s *Screen) ShowRecorded(p plan.Plan) {
+	sizes := map[string]domain.Size{}
+	for _, c := range p.Picked {
+		sizes[c.Path] = c.Fingerprint.Size
+	}
+	for i := range s.order {
+		if size, ok := sizes[s.order[i].Path]; ok {
+			s.order[i].Size = size
+		}
+	}
+}
+
 // Decoder turns terminal bytes into keys. An escape sequence that arrives
 // in pieces is kept until a later Push completes it.
 type Decoder struct {

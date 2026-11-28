@@ -203,6 +203,60 @@ func TestTheScreenSkipsACandidateChangedAfterTheReview(t *testing.T) {
 	}
 }
 
+func TestTheReviewShowsTheSizeRecordedAtEnter(t *testing.T) {
+	b := build(t)
+	dir, key := b.buildFixture(t)
+	b.home = filepath.Join(dir, "home")
+	b.cache = t.TempDir()
+	if runtime.GOOS != "darwin" {
+		b.data = filepath.Join(dir, "trash-home")
+	}
+	env := b.commandEnv(t)
+	at := func(p string) string { return filepath.Join(dir, filepath.FromSlash(p)) }
+	stale, _ := splitByAge(t, key, at)
+	if len(stale) == 0 {
+		t.Fatal("no Stale Candidate, from the files' modification times")
+	}
+	changed := stale[0]
+	session := startTerminal(t, b.sweep, dir, env)
+	t.Cleanup(session.close)
+	session.waitFor(t, "enter review")
+	added := filepath.Join(changed, "added.bin")
+	if err := os.WriteFile(added, bytes.Repeat([]byte("x"), 256*1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var sum int64
+	for _, path := range stale {
+		sum += du(t, path)
+	}
+	grew := du(t, changed)
+	session.send(t, []byte{'\r'})
+	review := session.waitFor(t, "will be moved to trash")
+	if !reviewLine(review, changed, shown(grew)) {
+		t.Fatalf("the review does not show du's %s (%d) for %s\n%s", shown(grew), grew, changed, review)
+	}
+	want := countPhrase(len(stale)) + ", " + shown(sum) + " will be moved to trash"
+	if !strings.Contains(review, want) {
+		t.Fatalf("the review total is not %s, which du gave\n%s", want, review)
+	}
+	session.send(t, []byte("q"))
+	if code := session.finish(t); code != 0 {
+		t.Fatalf("exit %d, want 0\n%s\n%s", code, session.frame(), session.errText())
+	}
+	if _, err := os.Lstat(added); err != nil {
+		t.Errorf("the added file is gone: %v", err)
+	}
+}
+
+func reviewLine(frame, path, size string) bool {
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.Contains(line, path) && strings.Contains(line, size) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTheScreenReturnsToTheListWhenThePlanCannotBeRecorded(t *testing.T) {
 	if !movesToTrash() {
 		t.Skip("this operating system has no trash yet, so a Clean removes nothing")
