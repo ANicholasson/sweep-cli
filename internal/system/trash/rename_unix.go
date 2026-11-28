@@ -57,7 +57,10 @@ func openBeneath(dir, root string) (int, error) {
 		if name == "" || name == "." {
 			continue
 		}
-		next, err := openAt(fd, name, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+		// openChild refuses a mount, including a bind mount of the same
+		// filesystem. A mount between the Root and this directory is not
+		// entered, so a path outside the Root is not deleted.
+		next, err := openChild(fd, name)
 		_ = syscall.Close(fd)
 		if err != nil {
 			return -1, &os.PathError{Op: "open", Path: dir, Err: err}

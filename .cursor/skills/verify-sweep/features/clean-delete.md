@@ -7,7 +7,7 @@
 - `act` deletes the default Plan, leaves every Trap, and leaves a Link target outside the Candidate.
 - `changed` skips one Candidate under the Fingerprint rule and deletes the rest.
 - `link` skips a Candidate whose parent was swapped for a Link, and leaves the directory that Link names.
-- `mount` does not enter a directory inside a Candidate that is on another device, or a bind mount of a directory on the same filesystem.
+- `mount` does not enter a mount from the Root down: a directory inside a Candidate on another device, a bind mount of a directory on the same filesystem, or a bind mount between the Root and the Candidate.
 - `readonly` deletes a Candidate that holds a read-only file.
 - `dry` refuses `--delete` on a dry run and removes nothing.
 
@@ -16,7 +16,7 @@
 - Run `sweep clean --dry-run --plan <file> [Root...]`, then `sweep clean --delete --plan <file>`.
 - Change one Candidate between the two, then run the Clean with `--delete`.
 - Swap a directory above a Candidate for a Link between the two, then run the Clean with `--delete`.
-- Before the dry run, mount another device onto a directory inside a Candidate, or bind-mount a directory from the same filesystem there, then run the Clean with `--delete`.
+- Before the dry run, mount another device onto a directory inside a Candidate, bind-mount a directory from the same filesystem there, or bind-mount a directory between the Root and the Candidate, then run the Clean with `--delete`.
 - After the Plan, take the write bit off a file inside a Candidate, then run the Clean with `--delete`.
 - Run `sweep clean --delete --dry-run --plan <file>`.
 
@@ -35,6 +35,7 @@ Preconditions:
 - **Link above a Candidate.** On a fresh Fixture, dry-run the default Plan, rename `projects/stale-app` aside, and put a Link at that path whose target is `outside/stash-app`. Run `"$H" run "$RUN" clean-delete/link -- clean --delete --plan "$RUN/scratch/plan.json"`. Exit status `1`. stdout starts `The removal is permanent.`, contains `Root rule` and `projects/stale-app/node_modules`, and does not contain `Reclaimed: 1`. `outside/stash-app/node_modules/fake-theta/index.js` is unchanged, and the Candidate that was renamed aside is unchanged. Nothing was written under the trash.
 - **Another device.** On Linux, in a mount namespace, before the dry run bind a directory on another device (tmpfs, not the Fixture's own device) at `projects/stale-app/node_modules/mnt`, with `precious.txt` in the source. Run the dry run, then `"$H" run "$RUN" clean-delete/mount -- clean --delete --plan "$RUN/scratch/plan.json"`. Exit status `1`. `precious.txt` still has the same bytes. The mount point is still a mount. Nothing outside the Candidate's device was removed.
 - **Same filesystem.** On Linux, in a mount namespace, build a project under `$RUN/scratch` whose `node_modules` holds a bind mount of another directory on that same filesystem, with `precious.txt` in the source. `stat` shows one device number for the Candidate and the source. Run the dry run, then `"$H" run "$RUN" clean-delete/bind -- clean --delete --plan "$RUN/scratch/bind.json"`. Exit status `1`. `precious.txt` still has the same bytes. The mount point is still a mount.
+- **Above the Candidate.** On Linux, in a mount namespace, bind-mount a directory on the same filesystem at `$RUN/scratch/above/root/app`, with `package.json` and `node_modules/pkg/precious.txt` in the source. The Root is `$RUN/scratch/above/root`. `stat` shows one device number for the Root and the source. Run the dry run, then `"$H" run "$RUN" clean-delete/above -- clean --delete --plan "$RUN/scratch/above/plan.json"`. Exit status `1`. `precious.txt` still has the same bytes. The mount point is still a mount.
 - **Read-only file.** On a fresh Fixture, dry-run the default Plan. Take the write bit off `projects/stale-app/node_modules/fake-old/note.txt`. Run `"$H" run "$RUN" clean-delete/readonly -- clean --delete --plan "$RUN/scratch/plan.json"`. Exit status `0`, stderr empty. stdout starts `The removal is permanent.` and contains `Reclaimed:`. `projects/stale-app/node_modules` is gone, including that file. It is not under the trash. Every Trap is still in place.
 - **Dry run.** Run `"$H" run "$RUN" clean-delete/refused -- clean --delete --dry-run --plan "$RUN/scratch/refused.json" projects`. Exit status `2`, stdout empty, stderr is the clean usage. `fixture-changes.txt` is empty. The Plan file was not written.
 

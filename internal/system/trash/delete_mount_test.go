@@ -96,6 +96,51 @@ func TestDeleteDoesNotDescendIntoASameFilesystemBindMount(t *testing.T) {
 	}
 }
 
+func TestDeleteDoesNotDescendIntoABindMountAboveTheCandidate(t *testing.T) {
+	if !inMountNamespace(t) {
+		return
+	}
+
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	mountPoint := filepath.Join(root, "app")
+	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "elsewhere")
+	secret := filepath.Join(outside, "node_modules", "pkg", "precious.txt")
+	if err := os.MkdirAll(filepath.Dir(secret), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secret, []byte("precious\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var parent, source unix.Stat_t
+	if err := unix.Stat(root, &parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Stat(outside, &source); err != nil {
+		t.Fatal(err)
+	}
+	if parent.Dev != source.Dev {
+		t.Fatalf("source device %d, root device %d", source.Dev, parent.Dev)
+	}
+	if err := unix.Mount(outside, mountPoint, "", unix.MS_BIND, ""); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Unmount(mountPoint, unix.MNT_DETACH) }()
+
+	candidate := filepath.Join(mountPoint, "node_modules")
+	err := (Mover{}).Delete(root, candidate)
+	got, rerr := os.ReadFile(secret)
+	if rerr != nil || string(got) != "precious\n" {
+		t.Fatalf("the path outside the Root was removed: %q, %v", got, rerr)
+	}
+	if !errors.Is(err, syscall.EXDEV) {
+		t.Fatalf("Delete = %v, want a cross-device error", err)
+	}
+}
+
 func TestMountIDOpenRefusesASameFilesystemBindMount(t *testing.T) {
 	if !inMountNamespace(t) {
 		return
